@@ -1,3 +1,12 @@
+export interface Seller {
+  id: number;
+  name: string;
+  phone_number: string | null;
+  location: string | null;
+  memo: string | null;
+  created_at: string;
+}
+
 export interface Phone {
   id: number;
   brand: string;
@@ -7,10 +16,12 @@ export interface Phone {
   color: string | null;
   condition: "new" | "used_good" | "used_fair";
   cost_price: number;
-  selling_price: number;
-  status: "in_stock" | "sold" | "returned";
+  asking_price: number;
+  status: "in_stock" | "with_seller" | "sold" | "returned";
+  seller_id: number | null;
   memo: string | null;
   created_at: string;
+  distributed_at: string | null;
   sold_at: string | null;
 }
 
@@ -21,27 +32,9 @@ export interface Transaction {
   description: string;
   memo: string | null;
   phone_id: number | null;
-  category: "phone_sale" | "rent" | "utilities" | "transport" | "other";
-  created_at: string;
-}
-
-export interface Debt {
-  id: number;
-  type: "owes_me" | "i_owe";
-  name: string;
-  phone_number: string | null;
-  original_amount: number;
-  remaining_amount: number;
-  memo: string | null;
-  due_date: string | null;
-  created_at: string;
-}
-
-export interface DebtPayment {
-  id: number;
-  debt_id: number;
-  amount: number;
-  memo: string | null;
+  seller_id: number | null;
+  category: "collection" | "direct_sale" | "purchase" | "rent" | "utilities" | "transport" | "other";
+  payment_method: "cash" | "bank" | null;
   created_at: string;
 }
 
@@ -54,16 +47,21 @@ export interface BankEntry {
   created_at: string;
 }
 
+export interface SellerWithStats extends Seller {
+  phones_held: number;
+  total_owed: number;
+  total_collected: number;
+  total_given: number;
+}
+
 export interface DashboardStats {
   phones_in_stock: number;
-  inventory_value_cost: number;
-  inventory_value_selling: number;
-  total_income: number;
+  phones_with_sellers: number;
+  money_out_there: number;
+  stock_value: number;
+  total_collections: number;
   total_expenses: number;
   net_profit: number;
   bank_balance: number;
-  total_owed_to_me: number;
-  total_i_owe: number;
   total_capital: number;
-  cash_capital: number;
 }
