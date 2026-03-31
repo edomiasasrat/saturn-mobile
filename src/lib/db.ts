@@ -16,11 +16,9 @@ async function ensureInit() {
 async function initDb() {
   await client.batch(
     [
-      // Drop old tables
+      // Drop old v1 tables (safe — these don't exist in v2)
       "DROP TABLE IF EXISTS saturn_debt_payments",
       "DROP TABLE IF EXISTS saturn_debts",
-      "DROP TABLE IF EXISTS saturn_transactions",
-      "DROP TABLE IF EXISTS saturn_phones",
 
       // Sellers
       `CREATE TABLE IF NOT EXISTS saturn_sellers (
