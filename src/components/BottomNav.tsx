@@ -2,13 +2,13 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { LayoutDashboard, Package, Users, ArrowLeftRight, Landmark } from "lucide-react";
+import { LayoutDashboard, Package, Users, Clock, Landmark } from "lucide-react";
 
 const tabs = [
   { href: "/", label: "Home", icon: LayoutDashboard },
   { href: "/stock", label: "Stock", icon: Package },
   { href: "/sellers", label: "Sellers", icon: Users },
-  { href: "/transactions", label: "Money", icon: ArrowLeftRight },
+  { href: "/timeline", label: "Timeline", icon: Clock },
   { href: "/bank", label: "Bank", icon: Landmark },
 ];
 
