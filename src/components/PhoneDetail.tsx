@@ -64,6 +64,7 @@ function QuickSellForm({ phoneId, askingPrice, onDone }: { phoneId: number; aski
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
+    if (!confirm(`Sell for ETB ${Number(price).toLocaleString()} via ${method}?`)) return;
     setSaving(true);
     await data.quickSellPhone(phoneId, Number(price), method);
     onDone();
@@ -106,6 +107,7 @@ function CollectForm({ phoneId, sellerId, askingPrice, onDone }: { phoneId: numb
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
+    if (!confirm(`Collect ETB ${askingPrice.toLocaleString()} via ${method}?`)) return;
     setSaving(true);
     await data.collectPerPhone(sellerId, [phoneId], method);
     onDone();
@@ -219,6 +221,8 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button onClick={() => pushView(
             <SellerPicker onPick={async (sid) => {
+              const seller = data.getSeller(sid);
+              if (!confirm(`Give ${phone.brand} ${phone.model} to ${seller?.name || "this seller"}?`)) return;
               await data.distributePhone(phone.id, sid);
               onAction();
             }} />,
@@ -263,6 +267,7 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
             Collect Payment
           </button>
           <button onClick={async () => {
+            if (!confirm(`Return ${phone.brand} ${phone.model} to stock?`)) return;
             await data.returnPhone(phone.id);
             onAction();
           }} style={{

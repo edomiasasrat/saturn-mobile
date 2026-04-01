@@ -85,6 +85,8 @@ function CollectPaymentForm({ phones, sellerId, onDone }: { phones: Phone[]; sel
   const selectedTotal = phones.filter((p) => selectedIds.includes(p.id)).reduce((s, p) => s + p.asking_price, 0);
 
   async function handleSubmit() {
+    const amt = mode === "per_phone" ? selectedTotal : Number(lumpAmount);
+    if (!confirm(`Collect ETB ${amt.toLocaleString()} via ${method}?`)) return;
     setSaving(true);
     if (mode === "per_phone") {
       await data.collectPerPhone(sellerId, selectedIds, method);
@@ -174,6 +176,8 @@ function GivePhoneForm({ sellerId, onDone }: { sellerId: number; onDone: () => v
   });
 
   async function handleGive(phoneId: number) {
+    const phone = data.getPhone(phoneId);
+    if (!confirm(`Give ${phone?.brand} ${phone?.model} to this seller?`)) return;
     setSaving(true);
     await data.distributePhone(phoneId, sellerId);
     onDone();

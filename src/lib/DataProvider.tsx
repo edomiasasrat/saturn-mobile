@@ -82,25 +82,29 @@ function saveToStorage(store: DataStore) {
   } catch { /* storage full — silently fail */ }
 }
 
-// Fire-and-forget server POST — don't await in the UI
-function serverPost(url: string, body: unknown): void {
-  fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }).catch(() => { /* offline — ok */ });
+// Server calls — awaited so sequential operations don't race
+async function serverPost(url: string, body: unknown): Promise<Response | null> {
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch { return null; /* offline */ }
 }
 
-function serverPatch(url: string, body: unknown): void {
-  fetch(url, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }).catch(() => { /* offline — ok */ });
+async function serverPatch(url: string, body: unknown): Promise<Response | null> {
+  try {
+    return await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch { return null; /* offline */ }
 }
 
-function serverDelete(url: string): void {
-  fetch(url, { method: "DELETE" }).catch(() => { /* offline — ok */ });
+async function serverDelete(url: string): Promise<void> {
+  try { await fetch(url, { method: "DELETE" }); } catch { /* offline */ }
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
@@ -110,6 +114,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [bankEntries, setBankEntries] = useState<BankEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const nextId = useRef(Date.now()); // local temp IDs until server assigns real ones
+  const syncTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced sync — waits 800ms after last mutation to avoid overlapping syncs
+  function debouncedSync() {
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => syncFromServer(), 800);
+  }
 
   function tempId(): number {
     return nextId.current++;
@@ -301,7 +312,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     // Server — response has real ID, sync will fix it
     serverPost("/api/phones", data);
     // Quick re-sync to get real ID
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, []);
 
   const deletePhone = useCallback(async (id: number) => {
@@ -313,14 +324,16 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setPhones((prev) => prev.map((p) =>
       p.id === phoneId ? { ...p, status: "with_seller" as const, seller_id: sellerId, distributed_at: new Date().toISOString() } : p
     ));
-    serverPatch(`/api/phones/${phoneId}`, { action: "distribute", seller_id: sellerId });
+    await serverPatch(`/api/phones/${phoneId}`, { action: "distribute", seller_id: sellerId });
+    debouncedSync();
   }, []);
 
   const returnPhone = useCallback(async (phoneId: number) => {
     setPhones((prev) => prev.map((p) =>
       p.id === phoneId ? { ...p, status: "in_stock" as const, seller_id: null, distributed_at: null } : p
     ));
-    serverPatch(`/api/phones/${phoneId}`, { action: "return" });
+    await serverPatch(`/api/phones/${phoneId}`, { action: "return" });
+    debouncedSync();
   }, []);
 
   const quickSellPhone = useCallback(async (phoneId: number, price: number, paymentMethod: string) => {
@@ -351,7 +364,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     }
 
     serverPatch(`/api/phones/${phoneId}`, { action: "quick_sell", price, payment_method: paymentMethod });
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, [phones, getBankBalance]);
 
   const collectPerPhone = useCallback(async (sellerId: number, phoneIds: number[], paymentMethod: string) => {
@@ -389,7 +402,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     }
 
     serverPost(`/api/sellers/${sellerId}/collect`, { mode: "per_phone", phone_ids: phoneIds, payment_method: paymentMethod });
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, [phones, sellers, getBankBalance]);
 
   const collectLumpSum = useCallback(async (sellerId: number, amount: number, paymentMethod: string, memo: string | null) => {
@@ -414,14 +427,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     }
 
     serverPost(`/api/sellers/${sellerId}/collect`, { mode: "lump_sum", amount, payment_method: paymentMethod, memo });
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, [sellers, getBankBalance]);
 
   const addSeller = useCallback(async (data: { name: string; phone_number: string | null; location: string | null; memo: string | null }) => {
     const local: Seller = { id: tempId(), ...data, created_at: new Date().toISOString() };
     setSellers((prev) => [...prev, local]);
     serverPost("/api/sellers", data);
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, []);
 
   const deleteSeller = useCallback(async (id: number) => {
@@ -439,7 +452,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
     setTransactions((prev) => [tx, ...prev]);
     serverPost("/api/transactions", { ...data, type: "expense" });
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, []);
 
   const deleteTransaction = useCallback(async (id: number) => {
@@ -457,7 +470,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
     setBankEntries((prev) => [entry, ...prev]);
     serverPost("/api/bank", data);
-    setTimeout(() => syncFromServer(), 500);
+    debouncedSync();
   }, [getBankBalance]);
 
   return (
