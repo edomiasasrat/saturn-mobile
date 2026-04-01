@@ -23,7 +23,7 @@ const TYPE_CONFIG: Record<
   { Icon: React.ElementType; color: string }
 > = {
   phone_added:     { Icon: Package,       color: "var(--muted)" },
-  distributed:     { Icon: ArrowUpRight,  color: "var(--accent)" },
+  distributed:     { Icon: ArrowUpRight,  color: "var(--amber)" },
   collected:       { Icon: ArrowDownLeft, color: "var(--green)" },
   returned:        { Icon: RotateCcw,     color: "var(--muted)" },
   direct_sale:     { Icon: ShoppingBag,   color: "var(--green)" },

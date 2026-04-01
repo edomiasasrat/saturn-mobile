@@ -211,7 +211,7 @@ export default function SellersPage() {
                 )}
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: "var(--accent)" }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "var(--amber)" }}>
                   {formatBirr(seller.totalOwed)}
                 </div>
                 <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>

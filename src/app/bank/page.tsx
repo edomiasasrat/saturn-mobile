@@ -31,7 +31,7 @@ function EntryRow({ entry }: { entry: BankEntry }) {
         </div>
       </div>
       <div style={{ textAlign: "right" }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: isDeposit ? "var(--accent)" : "var(--error)" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: isDeposit ? "var(--green)" : "var(--error)" }}>
           {isDeposit ? "+" : "-"}{formatBirr(entry.amount)}
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
@@ -107,7 +107,7 @@ export default function BankPage() {
           <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
             Current Balance
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: loading ? "var(--muted)" : "var(--accent)", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 28, fontWeight: 700, color: loading ? "var(--muted)" : "var(--white)", letterSpacing: "-0.02em" }}>
             {loading ? "\u2014" : formatBirr(balance)}
           </div>
         </div>

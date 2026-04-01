@@ -186,7 +186,7 @@ export default function Dashboard() {
           <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
             Total Capital
           </span>
-          <span style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)" }}>
+          <span style={{ fontSize: 22, fontWeight: 700, color: "var(--white)" }}>
             {loading ? "\u2014" : formatBirr(stats.total_capital)}
           </span>
         </div>
@@ -223,7 +223,7 @@ export default function Dashboard() {
               <StatCard label="With Sellers" value={String(stats.phones_with_sellers)} />
             </div>
             <div onClick={() => openPhoneModal("with_seller")} style={{ cursor: "pointer" }}>
-              <StatCard label="Money Out" value={formatBirr(stats.money_out_there)} color="var(--accent)" />
+              <StatCard label="Money Out" value={formatBirr(stats.money_out_there)} color="var(--amber)" />
             </div>
             <div onClick={() => openPhoneModal("in_stock")} style={{ cursor: "pointer" }}>
               <StatCard label="Stock Value" value={formatBirr(stats.stock_value)} />
@@ -238,7 +238,7 @@ export default function Dashboard() {
               <StatCard label="Bank" value={formatBirr(stats.bank_balance)} />
             </div>
             <div onClick={() => openTransactionModal()} style={{ cursor: "pointer" }}>
-              <StatCard label="Profit" value={formatBirr(stats.net_profit)} color={stats.net_profit >= 0 ? "var(--green)" : "var(--error)"} />
+              <StatCard label="Profit" value={formatBirr(stats.net_profit)} color={stats.net_profit >= 0 ? "var(--green)" : "var(--amber)"} />
             </div>
           </div>
         )}
@@ -276,7 +276,7 @@ export default function Dashboard() {
                       {seller.name}
                     </span>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "var(--amber)" }}>
                         {formatBirr(seller.total_owed)}
                       </span>
                       <span style={{ fontSize: 12, color: "var(--muted)" }}>

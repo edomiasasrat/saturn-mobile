@@ -13,7 +13,7 @@ interface PhoneDetailProps {
 
 const condLabels: Record<string, string> = { new: "New", used_good: "Used - Good", used_fair: "Used - Fair" };
 const statusLabels: Record<string, string> = { in_stock: "In Stock", with_seller: "With Seller", sold: "Sold" };
-const statusColors: Record<string, string> = { in_stock: "var(--green)", with_seller: "var(--accent)", sold: "var(--muted)" };
+const statusColors: Record<string, string> = { in_stock: "var(--green)", with_seller: "var(--amber)", sold: "var(--muted)" };
 
 const row = (label: string, value: string | null | undefined, color?: string) => {
   if (!value) return null;
@@ -202,7 +202,7 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
         {row("Color", phone.color)}
         {row("Condition", condLabels[phone.condition])}
         {row("Cost Price", formatBirr(phone.cost_price))}
-        {row("Asking Price", formatBirr(phone.asking_price), "var(--accent)")}
+        {row("Asking Price", formatBirr(phone.asking_price), "var(--white)")}
         {row("Profit Margin", formatBirr(phone.asking_price - phone.cost_price), phone.asking_price > phone.cost_price ? "var(--green)" : "var(--error)")}
         {row("Added", formatDate(phone.created_at))}
         {phone.distributed_at && row("Distributed", formatDate(phone.distributed_at))}

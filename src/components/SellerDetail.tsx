@@ -37,7 +37,7 @@ function SellerPhonesList({ phones, pushView, onRefresh }: { phones: Phone[]; pu
               </div>
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)" }}>{formatBirr(p.asking_price)}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--white)" }}>{formatBirr(p.asking_price)}</div>
               {aging !== null && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{aging}d</div>}
             </div>
           </button>
@@ -118,7 +118,7 @@ function CollectPaymentForm({ phones, sellerId, onDone }: { phones: Phone[]; sel
               borderRadius: 10, color: "var(--white)", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
             }}>
               <div>{p.brand} {p.model}</div>
-              <div style={{ color: "var(--accent)" }}>{formatBirr(p.asking_price)}</div>
+              <div style={{ color: "var(--white)" }}>{formatBirr(p.asking_price)}</div>
             </button>
           ))}
           {selectedIds.length > 0 && (
@@ -199,7 +199,7 @@ function GivePhoneForm({ sellerId, onDone }: { sellerId: number; onDone: () => v
               <div>{p.brand} {p.model}</div>
               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{[p.storage, p.color].filter(Boolean).join(" · ")}</div>
             </div>
-            <div style={{ color: "var(--accent)", fontSize: 14, fontWeight: 700 }}>{formatBirr(p.asking_price)}</div>
+            <div style={{ color: "var(--white)", fontSize: 14, fontWeight: 700 }}>{formatBirr(p.asking_price)}</div>
           </button>
         ))}
         {filtered.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>No phones in stock</p>}
@@ -238,7 +238,7 @@ export default function SellerDetail({ sellerId, pushView, onAction }: SellerDet
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
         <div style={{ flex: 1, padding: "12px 14px", background: "var(--bg)", borderRadius: 10, textAlign: "center" }}>
           <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Total Owed</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)", marginTop: 4 }}>{formatBirr(totalOwed)}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--amber)", marginTop: 4 }}>{formatBirr(totalOwed)}</div>
         </div>
         <div style={{ flex: 1, padding: "12px 14px", background: "var(--bg)", borderRadius: 10, textAlign: "center" }}>
           <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Phones Held</div>

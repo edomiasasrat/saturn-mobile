@@ -28,7 +28,7 @@ const CONDITION_LABELS: Record<Condition, string> = {
 
 const STATUS_BADGES: Record<string, { label: string; color: string; bg: string }> = {
   in_stock: { label: "In Stock", color: "var(--green)", bg: "var(--green-dim)" },
-  with_seller: { label: "With Seller", color: "var(--accent)", bg: "color-mix(in srgb, var(--accent) 15%, transparent)" },
+  with_seller: { label: "With Seller", color: "var(--amber)", bg: "color-mix(in srgb, var(--amber) 15%, transparent)" },
   sold: { label: "Sold", color: "var(--muted)", bg: "color-mix(in srgb, var(--muted) 15%, transparent)" },
 };
 
@@ -277,7 +277,7 @@ export default function StockPage() {
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "var(--accent)" }}>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "var(--white)" }}>
                   {formatBirr(phone.asking_price)}
                 </span>
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
