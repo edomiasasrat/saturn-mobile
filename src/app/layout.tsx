@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
 import PinGate from "@/components/PinGate";
+import DataProvider from "@/lib/DataProvider";
 
 export const metadata: Metadata = {
   title: "Saturn Mobile",
@@ -22,10 +23,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <PinGate>
-          <div style={{ maxWidth: 600, margin: "0 auto", padding: "0 0 80px" }}>
-            {children}
-          </div>
-          <BottomNav />
+          <DataProvider>
+            <div style={{ maxWidth: 600, margin: "0 auto", padding: "0 0 80px" }}>
+              {children}
+            </div>
+            <BottomNav />
+          </DataProvider>
         </PinGate>
         <script
           dangerouslySetInnerHTML={{

@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, ReactNode } from "react";
 import { Package, ArrowUpRight, ArrowDownLeft, RotateCcw, ShoppingBag, Landmark } from "lucide-react";
-import { formatBirr } from "@/lib/format";
+import { formatBirr, formatDate } from "@/lib/format";
+import ModalDrilldown from "@/components/ModalDrilldown";
+import PhoneDetail from "@/components/PhoneDetail";
+import { useData } from "@/lib/DataProvider";
+import type { TimelineEvent } from "@/lib/DataProvider";
 
 type EventType =
   | "phone_added"
@@ -13,16 +17,6 @@ type EventType =
   | "expense"
   | "bank_deposit"
   | "bank_withdrawal";
-
-interface TimelineEvent {
-  id: string;
-  type: EventType;
-  title: string;
-  subtitle: string | null;
-  amount: number | null;
-  amountType: "income" | "expense" | "neutral" | null;
-  created_at: string;
-}
 
 const TYPE_CONFIG: Record<
   EventType,
@@ -37,6 +31,41 @@ const TYPE_CONFIG: Record<
   bank_deposit:    { Icon: Landmark,      color: "var(--green)" },
   bank_withdrawal: { Icon: Landmark,      color: "var(--error)" },
 };
+
+/* ─── Phone-type events where we can extract a phone ID ─── */
+const PHONE_EVENT_PREFIXES: Record<string, string[]> = {
+  phone_added: ["phone-add-"],
+  distributed: ["phone-dist-"],
+  direct_sale: ["phone-sale-", "phone-add-"],
+  collected:   ["phone-col-", "phone-add-"],
+};
+
+function extractPhoneId(event: TimelineEvent): number | null {
+  const prefixes = PHONE_EVENT_PREFIXES[event.type];
+  if (!prefixes) return null;
+  for (const prefix of prefixes) {
+    if (event.id.startsWith(prefix)) {
+      const num = parseInt(event.id.slice(prefix.length), 10);
+      if (!isNaN(num)) return num;
+    }
+  }
+  // Also try generic patterns
+  if (event.id.startsWith("phone-add-")) {
+    const num = parseInt(event.id.slice("phone-add-".length), 10);
+    if (!isNaN(num)) return num;
+  }
+  if (event.id.startsWith("phone-dist-")) {
+    const num = parseInt(event.id.slice("phone-dist-".length), 10);
+    if (!isNaN(num)) return num;
+  }
+  return null;
+}
+
+function isPhoneEvent(type: EventType): boolean {
+  return ["phone_added", "distributed", "direct_sale", "collected"].includes(type);
+}
+
+/* ─── Date helpers ─── */
 
 function relativeDate(iso: string): string {
   const now = Date.now();
@@ -74,7 +103,6 @@ function getGroupKey(iso: string): string {
   if (diffDays < 7)  return "This Week";
   if (diffDays < 30) return "This Month";
 
-  // Older: group by "Month Year"
   return date.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 }
 
@@ -91,7 +119,6 @@ function groupEvents(events: TimelineEvent[]): Array<{ label: string; events: Ti
 
   const groups: Array<{ label: string; events: TimelineEvent[] }> = [];
 
-  // Fixed order for recent groups
   for (const label of GROUP_ORDER) {
     if (map.has(label)) {
       groups.push({ label, events: map.get(label)! });
@@ -99,7 +126,6 @@ function groupEvents(events: TimelineEvent[]): Array<{ label: string; events: Ti
     }
   }
 
-  // Remaining older groups (already in date-desc order since events are sorted)
   for (const [label, evs] of map) {
     groups.push({ label, events: evs });
   }
@@ -107,22 +133,129 @@ function groupEvents(events: TimelineEvent[]): Array<{ label: string; events: Ti
   return groups;
 }
 
-export default function TimelinePage() {
-  const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+/* ─── Detail row helper for inline cards ─── */
+const detailRow = (label: string, value: string | null | undefined, color?: string) => {
+  if (!value) return null;
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--surface-border)" }}>
+      <span style={{ fontSize: 12, color: "var(--muted)", textTransform: "uppercase", fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 600, color: color || "var(--white)" }}>{value}</span>
+    </div>
+  );
+};
 
-  useEffect(() => {
-    fetch("/api/timeline")
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to load timeline");
-        return r.json();
-      })
-      .then((data) => { setEvents(data); setLoading(false); })
-      .catch((e) => { setError(e.message); setLoading(false); });
-  }, []);
+/* ─── Inline detail cards ─── */
+
+function ExpenseDetailCard({ event }: { event: TimelineEvent }) {
+  return (
+    <div>
+      <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: "0 0 16px" }}>
+        {event.title}
+      </h2>
+      <div style={{ marginBottom: 16 }}>
+        {detailRow("Type", "Expense")}
+        {detailRow("Description", event.title)}
+        {event.amount !== null && detailRow("Amount", formatBirr(event.amount), "var(--error)")}
+        {detailRow("Date", formatDate(event.created_at))}
+        {event.subtitle && detailRow("Details", event.subtitle)}
+      </div>
+    </div>
+  );
+}
+
+function BankDetailCard({ event }: { event: TimelineEvent }) {
+  const isDeposit = event.type === "bank_deposit";
+  return (
+    <div>
+      <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: "0 0 16px" }}>
+        {event.title}
+      </h2>
+      <div style={{ marginBottom: 16 }}>
+        {detailRow("Type", isDeposit ? "Deposit" : "Withdrawal")}
+        {event.amount !== null && detailRow("Amount", formatBirr(event.amount), isDeposit ? "var(--green)" : "var(--error)")}
+        {event.subtitle && detailRow("Details", event.subtitle)}
+        {detailRow("Date", formatDate(event.created_at))}
+      </div>
+    </div>
+  );
+}
+
+function GenericEventCard({ event }: { event: TimelineEvent }) {
+  const amountColor =
+    event.amountType === "income"  ? "var(--green)"  :
+    event.amountType === "expense" ? "var(--error)"  :
+    "var(--muted)";
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: "0 0 16px" }}>
+        {event.title}
+      </h2>
+      <div style={{ marginBottom: 16 }}>
+        {detailRow("Type", event.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))}
+        {event.amount !== null && detailRow("Amount", formatBirr(event.amount), amountColor)}
+        {event.subtitle && detailRow("Details", event.subtitle)}
+        {detailRow("Date", formatDate(event.created_at))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Page ─── */
+
+export default function TimelinePage() {
+  const { getTimelineEvents, loading, refresh } = useData();
+
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalIndex, setModalIndex] = useState(0);
+
+  // Computed instantly from context
+  const events = getTimelineEvents();
 
   const groups = groupEvents(events);
+
+  // Flat index for modal cycling
+  const flatEvents = groups.flatMap((g) => g.events);
+
+  function openEvent(eventId: string) {
+    const idx = flatEvents.findIndex((e) => e.id === eventId);
+    if (idx >= 0) {
+      setModalIndex(idx);
+      setModalOpen(true);
+    }
+  }
+
+  function renderContent(item: any, pushView: (content: ReactNode, title: string) => void): ReactNode {
+    const event = item as TimelineEvent;
+
+    // Phone events: try to extract phone ID for PhoneDetail
+    if (isPhoneEvent(event.type as EventType)) {
+      const phoneId = extractPhoneId(event);
+      if (phoneId !== null) {
+        return (
+          <PhoneDetail
+            phoneId={phoneId}
+            pushView={pushView}
+            onAction={refresh}
+          />
+        );
+      }
+    }
+
+    // Expense events
+    if (event.type === "expense") {
+      return <ExpenseDetailCard event={event} />;
+    }
+
+    // Bank events
+    if (event.type === "bank_deposit" || event.type === "bank_withdrawal") {
+      return <BankDetailCard event={event} />;
+    }
+
+    // Fallback: generic card
+    return <GenericEventCard event={event} />;
+  }
 
   return (
     <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: 80 }}>
@@ -136,7 +269,7 @@ export default function TimelinePage() {
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "var(--text)" }}>
           Timeline
         </h1>
-        {!loading && !error && (
+        {!loading && (
           <p style={{ margin: "2px 0 0", fontSize: 13, color: "var(--muted)" }}>
             {events.length} event{events.length !== 1 ? "s" : ""} total
           </p>
@@ -150,22 +283,13 @@ export default function TimelinePage() {
           </div>
         )}
 
-        {error && (
-          <div style={{
-            background: "var(--surface)", border: "1px solid var(--error)",
-            borderRadius: 10, padding: "16px", color: "var(--error)", fontSize: 14,
-          }}>
-            {error}
-          </div>
-        )}
-
-        {!loading && !error && events.length === 0 && (
+        {!loading && events.length === 0 && (
           <div style={{ textAlign: "center", padding: "60px 0", color: "var(--muted)", fontSize: 14 }}>
             No events yet
           </div>
         )}
 
-        {!loading && !error && groups.map((group) => (
+        {!loading && groups.map((group) => (
           <div key={group.label} style={{ marginBottom: 8 }}>
             {/* Group header */}
             <div style={{
@@ -184,7 +308,7 @@ export default function TimelinePage() {
             {/* Events */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {group.events.map((event) => {
-                const cfg = TYPE_CONFIG[event.type];
+                const cfg = TYPE_CONFIG[event.type as EventType];
                 const Icon = cfg.Icon;
 
                 const amountColor =
@@ -195,6 +319,7 @@ export default function TimelinePage() {
                 return (
                   <div
                     key={event.id}
+                    onClick={() => openEvent(event.id)}
                     style={{
                       background: "var(--surface)",
                       border: "1px solid var(--surface-border)",
@@ -203,6 +328,7 @@ export default function TimelinePage() {
                       display: "flex",
                       alignItems: "flex-start",
                       gap: 12,
+                      cursor: "pointer",
                     }}
                   >
                     {/* Icon */}
@@ -256,6 +382,16 @@ export default function TimelinePage() {
           </div>
         ))}
       </div>
+
+      {/* Modal Drilldown */}
+      <ModalDrilldown
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        items={flatEvents}
+        currentIndex={modalIndex}
+        onChangeIndex={setModalIndex}
+        renderContent={renderContent}
+      />
     </div>
   );
 }

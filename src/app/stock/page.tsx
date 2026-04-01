@@ -1,14 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import ModalDrilldown from "@/components/ModalDrilldown";
+import SortDropdown from "@/components/SortDropdown";
+import PhoneDetail from "@/components/PhoneDetail";
 import BottomSheet from "@/components/BottomSheet";
 import FAB from "@/components/FAB";
 import { formatBirr } from "@/lib/format";
+import { useData } from "@/lib/DataProvider";
 import type { Phone } from "@/lib/types";
 
 type Condition = "new" | "used_good" | "used_fair";
+type StatusFilter = "all" | "in_stock" | "with_seller" | "sold";
 
 const CONDITIONS: { value: Condition; label: string }[] = [
   { value: "new", label: "New" },
@@ -16,27 +20,53 @@ const CONDITIONS: { value: Condition; label: string }[] = [
   { value: "used_fair", label: "Used - Fair" },
 ];
 
-const SEEDS = [
-  { brand: "Samsung", model: "Galaxy A54", imei: "354123098765432", storage: "128GB", color: "Black", condition: "used_good", cost_price: 12000, asking_price: 15000, memo: "Minor scratch on back" },
-  { brand: "Apple", model: "iPhone 13", imei: "356789012345678", storage: "128GB", color: "White", condition: "used_good", cost_price: 28000, asking_price: 34000, memo: "Battery health 89%" },
-  { brand: "Tecno", model: "Spark 10 Pro", imei: "352468013579024", storage: "256GB", color: "Blue", condition: "new", cost_price: 8000, asking_price: 10500, memo: null },
-  { brand: "Samsung", model: "Galaxy S23", imei: "359876543210987", storage: "256GB", color: "Green", condition: "new", cost_price: 42000, asking_price: 50000, memo: "Sealed box" },
-  { brand: "Xiaomi", model: "Redmi Note 12", imei: "351234567890123", storage: "128GB", color: "Black", condition: "used_fair", cost_price: 6500, asking_price: 8500, memo: "Screen replaced" },
-] as const;
-
 const CONDITION_LABELS: Record<Condition, string> = {
   new: "New",
   used_good: "Used - Good",
   used_fair: "Used - Fair",
 };
 
+const STATUS_BADGES: Record<string, { label: string; color: string; bg: string }> = {
+  in_stock: { label: "In Stock", color: "var(--green)", bg: "var(--green-dim)" },
+  with_seller: { label: "With Seller", color: "var(--accent)", bg: "color-mix(in srgb, var(--accent) 15%, transparent)" },
+  sold: { label: "Sold", color: "var(--muted)", bg: "color-mix(in srgb, var(--muted) 15%, transparent)" },
+};
+
+const FILTER_TABS: { key: StatusFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "in_stock", label: "In Stock" },
+  { key: "with_seller", label: "With Sellers" },
+  { key: "sold", label: "Sold" },
+];
+
+function sortPhones(arr: Phone[], key: string): Phone[] {
+  const sorted = [...arr];
+  switch (key) {
+    case "newest":
+      return sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    case "brand":
+      return sorted.sort((a, b) => a.brand.localeCompare(b.brand) || a.model.localeCompare(b.model));
+    case "price":
+      return sorted.sort((a, b) => b.asking_price - a.asking_price);
+    case "aging":
+      return sorted.sort((a, b) => {
+        const aTime = a.distributed_at ? new Date(a.distributed_at).getTime() : Infinity;
+        const bTime = b.distributed_at ? new Date(b.distributed_at).getTime() : Infinity;
+        return aTime - bTime;
+      });
+    default:
+      return sorted;
+  }
+}
+
 export default function StockPage() {
-  const router = useRouter();
-  const [phones, setPhones] = useState<Phone[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { phones, addPhone, loading, refresh } = useData();
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [sortKey, setSortKey] = useState("newest");
   const [sheetOpen, setSheetOpen] = useState(false);
-  const seededRef = useRef(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalIndex, setModalIndex] = useState(0);
 
   // Form state
   const [brand, setBrand] = useState("");
@@ -51,46 +81,49 @@ export default function StockPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const fetchPhones = useCallback(async (skipSeed = false) => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/phones?status=in_stock");
-      if (!res.ok) throw new Error();
-      const data: Phone[] = await res.json();
+  // Computed list: filter -> search -> sort
+  const displayList = useMemo(() => {
+    let list = phones;
 
-      if (!skipSeed && !seededRef.current && data.length === 0) {
-        seededRef.current = true;
-        await Promise.all(
-          SEEDS.map((p) =>
-            fetch("/api/phones", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(p),
-            })
-          )
-        );
-        await fetchPhones(true);
-        return;
-      }
-      setPhones(data);
-    } catch {
-      // keep previous data
-    } finally {
-      setLoading(false);
+    // Status filter
+    if (filter !== "all") {
+      list = list.filter((p) => p.status === filter);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { fetchPhones(); }, [fetchPhones]);
+    // Search
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (p) =>
+          p.brand.toLowerCase().includes(q) ||
+          p.model.toLowerCase().includes(q) ||
+          (p.imei && p.imei.toLowerCase().includes(q))
+      );
+    }
 
-  const filtered = phones.filter((p) => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      p.brand.toLowerCase().includes(q) ||
-      p.model.toLowerCase().includes(q) ||
-      (p.imei && p.imei.toLowerCase().includes(q))
-    );
-  });
+    // Sort
+    return sortPhones(list, sortKey);
+  }, [phones, filter, search, sortKey]);
+
+  // Sort options - show Aging only when With Sellers filter is active
+  const sortOptions = useMemo(() => {
+    const base = [
+      { key: "newest", label: "Newest" },
+      { key: "brand", label: "Brand" },
+      { key: "price", label: "Price" },
+    ];
+    if (filter === "with_seller") {
+      base.push({ key: "aging", label: "Aging" });
+    }
+    return base;
+  }, [filter]);
+
+  // Reset sort if switching away from with_seller while aging is selected
+  useEffect(() => {
+    if (filter !== "with_seller" && sortKey === "aging") {
+      setSortKey("newest");
+    }
+  }, [filter, sortKey]);
 
   const resetForm = () => {
     setBrand(""); setModel(""); setImei(""); setStorage("");
@@ -111,27 +144,17 @@ export default function StockPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/phones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brand: brand.trim(),
-          model: model.trim(),
-          imei: imei.trim() || null,
-          storage: storage.trim() || null,
-          color: color.trim() || null,
-          condition,
-          cost_price: cost,
-          asking_price: asking,
-          memo: memo.trim() || null,
-        }),
+      await addPhone({
+        brand: brand.trim(),
+        model: model.trim(),
+        imei: imei.trim() || null,
+        storage: storage.trim() || null,
+        color: color.trim() || null,
+        condition,
+        cost_price: cost,
+        asking_price: asking,
+        memo: memo.trim() || null,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? "Failed to save");
-      }
-      const newPhone: Phone = await res.json();
-      setPhones((prev) => [newPhone, ...prev]);
       setSheetOpen(false);
       resetForm();
     } catch (err) {
@@ -163,12 +186,36 @@ export default function StockPage() {
         background: "var(--surface)",
         borderBottom: "1px solid var(--surface-border)",
       }}>
-        <h1 style={{
-          margin: "0 0 12px", fontSize: 24, fontWeight: 800,
-          color: "var(--white)", letterSpacing: "-0.5px",
-        }}>
-          Stock
-        </h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <h1 style={{
+            margin: 0, fontSize: 24, fontWeight: 800,
+            color: "var(--white)", letterSpacing: "-0.5px",
+          }}>
+            Stock
+          </h1>
+          <SortDropdown options={sortOptions} value={sortKey} onChange={setSortKey} />
+        </div>
+
+        {/* Filter tabs */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto" }}>
+          {FILTER_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              style={{
+                padding: "6px 14px", borderRadius: 8, border: "none",
+                fontSize: 13, fontWeight: 600, cursor: "pointer",
+                whiteSpace: "nowrap",
+                background: filter === tab.key ? "var(--accent)" : "var(--bg)",
+                color: filter === tab.key ? "var(--white)" : "var(--muted)",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search */}
         <div style={{
           display: "flex", alignItems: "center", gap: 8,
           background: "var(--bg)",
@@ -194,52 +241,83 @@ export default function StockPage() {
       <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column" }}>
         {loading ? (
           <p style={{ textAlign: "center", color: "var(--muted)", padding: "48px 0", fontSize: 15 }}>Loading...</p>
-        ) : filtered.length === 0 ? (
+        ) : displayList.length === 0 ? (
           <p style={{ textAlign: "center", color: "var(--muted)", padding: "64px 0", fontSize: 15 }}>
-            {search ? "No phones match your search." : "No phones in stock. Tap + to add one."}
+            {search ? "No phones match your search." : "No phones found. Tap + to add one."}
           </p>
-        ) : filtered.map((phone) => (
-          <div
-            key={phone.id}
-            onClick={() => router.push(`/stock/${phone.id}`)}
-            style={{
-              background: "var(--surface)",
-              border: "1px solid var(--surface-border)",
-              borderRadius: 10,
-              padding: "12px 14px",
-              marginBottom: 8,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              cursor: "pointer",
-              gap: 12,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "var(--white)" }}>
-                {phone.brand} {phone.model}
+        ) : displayList.map((phone, idx) => {
+          const badge = STATUS_BADGES[phone.status] || STATUS_BADGES.in_stock;
+          const aging = phone.status === "with_seller" && phone.distributed_at
+            ? Math.floor((Date.now() - new Date(phone.distributed_at).getTime()) / 86400000)
+            : null;
+
+          return (
+            <div
+              key={phone.id}
+              onClick={() => { setModalIndex(idx); setModalOpen(true); }}
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--surface-border)",
+                borderRadius: 10,
+                padding: "12px 14px",
+                marginBottom: 8,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                cursor: "pointer",
+                gap: 12,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "var(--white)" }}>
+                  {phone.brand} {phone.model}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+                  {[phone.storage, phone.color, CONDITION_LABELS[phone.condition]].filter(Boolean).join(" · ")}
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                {[phone.storage, phone.color, CONDITION_LABELS[phone.condition]].filter(Boolean).join(" · ")}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                <span style={{ fontWeight: 700, fontSize: 15, color: "var(--accent)" }}>
+                  {formatBirr(phone.asking_price)}
+                </span>
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 600,
+                    padding: "2px 8px", borderRadius: 999,
+                    background: badge.bg, color: badge.color,
+                  }}>
+                    {badge.label}
+                  </span>
+                  {aging !== null && (
+                    <span style={{
+                      fontSize: 11, fontWeight: 600,
+                      padding: "2px 6px", borderRadius: 999,
+                      background: "var(--amber-dim, var(--error-dim))",
+                      color: "var(--amber, var(--error))",
+                    }}>
+                      {aging}d
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: "var(--accent)" }}>
-                {formatBirr(phone.asking_price)}
-              </span>
-              <span style={{
-                fontSize: 11, fontWeight: 600,
-                padding: "2px 8px", borderRadius: 999,
-                background: "var(--green-dim)", color: "var(--green)",
-              }}>
-                In Stock
-              </span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <FAB onClick={() => { resetForm(); setSheetOpen(true); }} />
+
+      {/* Modal Drilldown */}
+      <ModalDrilldown
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        items={displayList}
+        currentIndex={modalIndex}
+        onChangeIndex={setModalIndex}
+        renderContent={(item, pushView) => (
+          <PhoneDetail phoneId={item.id} pushView={pushView} onAction={refresh} />
+        )}
+      />
 
       {/* Add Phone Sheet */}
       <BottomSheet open={sheetOpen} onClose={() => { setSheetOpen(false); resetForm(); }} title="Add Phone">

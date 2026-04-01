@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, ReactNode } from "react";
+import { useState, ReactNode } from "react";
 import { Phone as PhoneIcon } from "lucide-react";
 import PhoneDetail from "@/components/PhoneDetail";
-import type { SellerWithStats, Phone, Transaction } from "@/lib/types";
+import { useData } from "@/lib/DataProvider";
+import type { Phone, Transaction } from "@/lib/types";
 import { formatBirr, formatDate } from "@/lib/format";
 
 interface SellerDetailProps {
@@ -12,169 +13,56 @@ interface SellerDetailProps {
   onAction: () => void;
 }
 
-/* ─── Shared style helpers ─── */
-
-const btnBase = {
-  padding: 13,
-  borderRadius: 10,
-  fontWeight: 700 as const,
-  fontSize: 15,
-  cursor: "pointer" as const,
-  border: "none" as const,
-  width: "100%" as const,
-};
-
-const outlineBtn = {
-  ...btnBase,
-  background: "transparent",
-  border: "1px solid var(--surface-border)",
-  color: "var(--white)",
-};
-
-const methodToggle = (active: boolean) => ({
-  flex: 1,
-  padding: 10,
-  borderRadius: 8,
-  border: "none" as const,
-  cursor: "pointer" as const,
-  fontWeight: 600 as const,
-  fontSize: 14,
-  textTransform: "capitalize" as const,
-  background: active ? "var(--accent)" : "var(--bg)",
-  color: active ? "var(--white)" : "var(--muted)",
-});
-
-/* ─── Sub-view: Their Phones ─── */
-
-function SellerPhonesList({
-  sellerId,
-  pushView,
-  onRefresh,
-}: {
-  sellerId: number;
-  pushView: (content: ReactNode, title: string) => void;
-  onRefresh: () => void;
-}) {
-  const [phones, setPhones] = useState<Phone[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [returning, setReturning] = useState<number | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await fetch(`/api/phones?seller_id=${sellerId}&status=with_seller`);
-    if (res.ok) {
-      const data = await res.json();
-      setPhones(Array.isArray(data) ? data : data.phones || []);
-    }
-    setLoading(false);
-  }, [sellerId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function handleReturn(phoneId: number) {
-    setReturning(phoneId);
-    await fetch(`/api/phones/${phoneId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "return" }),
-    });
-    setReturning(null);
-    await load();
-    onRefresh();
-  }
-
-  if (loading) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>Loading...</div>;
-  if (phones.length === 0) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>No phones with this seller</div>;
+function SellerPhonesList({ phones, pushView, onRefresh }: { phones: Phone[]; pushView: (content: ReactNode, title: string) => void; onRefresh: () => void }) {
+  if (phones.length === 0) return <p style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>No phones with this seller</p>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {phones.map((p) => {
-        const days = p.distributed_at
-          ? Math.floor((Date.now() - new Date(p.distributed_at).getTime()) / 86400000)
-          : null;
+        const aging = p.distributed_at ? Math.floor((Date.now() - new Date(p.distributed_at).getTime()) / 86400000) : null;
         return (
-          <div key={p.id} style={{
-            display: "flex", alignItems: "center", gap: 10,
-            padding: "12px 14px", background: "var(--bg)",
-            border: "1px solid var(--surface-border)", borderRadius: 10,
+          <button key={p.id} onClick={() => pushView(
+            <PhoneDetail phoneId={p.id} pushView={pushView} onAction={onRefresh} />,
+            `${p.brand} ${p.model}`
+          )} style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            width: "100%", padding: "12px 14px",
+            background: "var(--bg)", border: "1px solid var(--surface-border)", borderRadius: 10,
+            color: "var(--white)", fontSize: 14, fontWeight: 600, cursor: "pointer", textAlign: "left",
           }}>
-            <div
-              style={{ flex: 1, cursor: "pointer" }}
-              onClick={() =>
-                pushView(
-                  <PhoneDetail
-                    phoneId={p.id}
-                    pushView={pushView}
-                    onAction={() => { load(); onRefresh(); }}
-                  />,
-                  `${p.brand} ${p.model}`
-                )
-              }
-            >
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--white)" }}>
-                {p.brand} {p.model}
-              </div>
+            <div style={{ minWidth: 0 }}>
+              <div>{p.brand} {p.model}</div>
               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                {formatBirr(p.asking_price)}
-                {days !== null && <span style={{ marginLeft: 8, color: "var(--accent)" }}>{days}d</span>}
+                {[p.storage, p.color].filter(Boolean).join(" · ")}
               </div>
             </div>
-            <button
-              onClick={() => handleReturn(p.id)}
-              disabled={returning === p.id}
-              style={{
-                padding: "6px 12px", borderRadius: 8, border: "1px solid var(--surface-border)",
-                background: "transparent", color: "var(--accent)", fontSize: 12, fontWeight: 600,
-                cursor: returning === p.id ? "not-allowed" : "pointer",
-                opacity: returning === p.id ? 0.6 : 1,
-              }}
-            >
-              {returning === p.id ? "..." : "Return"}
-            </button>
-          </div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)" }}>{formatBirr(p.asking_price)}</div>
+              {aging !== null && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{aging}d</div>}
+            </div>
+          </button>
         );
       })}
     </div>
   );
 }
 
-/* ─── Sub-view: Payment History ─── */
-
 function PaymentHistoryList({ transactions }: { transactions: Transaction[] }) {
-  const sorted = [...transactions].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
-
-  if (sorted.length === 0)
-    return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>No payment history</div>;
+  if (transactions.length === 0) return <p style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>No payment history</p>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {sorted.map((t) => (
+      {transactions.map((t) => (
         <div key={t.id} style={{
+          padding: "10px 14px", background: "var(--bg)", border: "1px solid var(--surface-border)", borderRadius: 10,
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          padding: "12px 14px", background: "var(--bg)",
-          border: "1px solid var(--surface-border)", borderRadius: 10,
         }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--white)" }}>{t.description}</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{formatDate(t.created_at)}</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{formatDate(t.created_at)}</div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "var(--green)" }}>
-              +{formatBirr(t.amount)}
-            </span>
-            {t.payment_method && (
-              <span style={{
-                padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 600,
-                textTransform: "uppercase",
-                background: t.payment_method === "cash" ? "var(--bg)" : "color-mix(in srgb, var(--accent) 15%, transparent)",
-                color: t.payment_method === "cash" ? "var(--muted)" : "var(--accent)",
-                border: t.payment_method === "cash" ? "1px solid var(--surface-border)" : "none",
-              }}>
-                {t.payment_method}
-              </span>
-            )}
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.type === "income" ? "var(--green)" : "var(--error)" }}>
+            {t.type === "income" ? "+" : "-"}{formatBirr(t.amount)}
           </div>
         </div>
       ))}
@@ -182,199 +70,114 @@ function PaymentHistoryList({ transactions }: { transactions: Transaction[] }) {
   );
 }
 
-/* ─── Sub-view: Collect Payment ─── */
-
-function CollectPaymentForm({
-  sellerId,
-  phones,
-  onDone,
-}: {
-  sellerId: number;
-  phones: Phone[];
-  onDone: () => void;
-}) {
-  const [tab, setTab] = useState<"per_phone" | "lump_sum">("per_phone");
+function CollectPaymentForm({ phones, sellerId, onDone }: { phones: Phone[]; sellerId: number; onDone: () => void }) {
+  const data = useData();
+  const [mode, setMode] = useState<"per_phone" | "lump_sum">("per_phone");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [lumpAmount, setLumpAmount] = useState("");
   const [method, setMethod] = useState<"cash" | "bank">("cash");
   const [saving, setSaving] = useState(false);
 
-  // Lump sum state
-  const [amount, setAmount] = useState("");
-  const [memo, setMemo] = useState("");
+  const togglePhone = (id: number) => {
+    setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
 
-  const total = phones
-    .filter((p) => selectedIds.includes(p.id))
-    .reduce((s, p) => s + p.asking_price, 0);
-
-  function togglePhone(id: number) {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
+  const selectedTotal = phones.filter((p) => selectedIds.includes(p.id)).reduce((s, p) => s + p.asking_price, 0);
 
   async function handleSubmit() {
     setSaving(true);
-    if (tab === "per_phone") {
-      if (selectedIds.length === 0) { setSaving(false); return; }
-      await fetch(`/api/sellers/${sellerId}/collect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "per_phone", phone_ids: selectedIds, payment_method: method }),
-      });
+    if (mode === "per_phone") {
+      await data.collectPerPhone(sellerId, selectedIds, method);
     } else {
-      if (!amount) { setSaving(false); return; }
-      await fetch(`/api/sellers/${sellerId}/collect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "lump_sum", amount: Number(amount), payment_method: method, memo }),
-      });
+      await data.collectLumpSum(sellerId, Number(lumpAmount), method, null);
     }
-    setSaving(false);
     onDone();
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* Tab toggle */}
-      <div style={{ display: "flex", gap: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--surface-border)" }}>
-        {(["per_phone", "lump_sum"] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            flex: 1, padding: 10, border: "none", cursor: "pointer",
+      <div style={{ display: "flex", gap: 8 }}>
+        {(["per_phone", "lump_sum"] as const).map((m) => (
+          <button key={m} onClick={() => setMode(m)} style={{
+            flex: 1, padding: 10, borderRadius: 8, border: "none", cursor: "pointer",
             fontWeight: 600, fontSize: 13,
-            background: tab === t ? "var(--accent)" : "var(--bg)",
-            color: tab === t ? "var(--white)" : "var(--muted)",
-          }}>
-            {t === "per_phone" ? "Per Phone" : "Lump Sum"}
-          </button>
+            background: mode === m ? "var(--accent)" : "var(--bg)",
+            color: mode === m ? "var(--white)" : "var(--muted)",
+          }}>{m === "per_phone" ? "Per Phone" : "Lump Sum"}</button>
         ))}
       </div>
 
-      {tab === "per_phone" ? (
-        <>
-          {phones.length === 0 && (
-            <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>No phones to collect for</div>
-          )}
+      {mode === "per_phone" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {phones.map((p) => (
-            <label key={p.id} style={{
-              display: "flex", alignItems: "center", gap: 10,
-              padding: "12px 14px", background: "var(--bg)",
-              border: "1px solid var(--surface-border)", borderRadius: 10,
-              cursor: "pointer",
+            <button key={p.id} onClick={() => togglePhone(p.id)} style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              width: "100%", padding: "10px 14px",
+              background: selectedIds.includes(p.id) ? "color-mix(in srgb, var(--accent) 15%, var(--bg))" : "var(--bg)",
+              border: `1px solid ${selectedIds.includes(p.id) ? "var(--accent)" : "var(--surface-border)"}`,
+              borderRadius: 10, color: "var(--white)", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left",
             }}>
-              <input
-                type="checkbox"
-                checked={selectedIds.includes(p.id)}
-                onChange={() => togglePhone(p.id)}
-                style={{ width: 18, height: 18, accentColor: "var(--accent)" }}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--white)" }}>
-                  {p.brand} {p.model}
-                </div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                  {formatBirr(p.asking_price)}
-                </div>
-              </div>
-            </label>
+              <div>{p.brand} {p.model}</div>
+              <div style={{ color: "var(--accent)" }}>{formatBirr(p.asking_price)}</div>
+            </button>
           ))}
           {selectedIds.length > 0 && (
-            <div style={{ padding: 14, background: "var(--bg)", borderRadius: 10, textAlign: "center" }}>
-              <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Total</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: "var(--green)", marginTop: 4 }}>{formatBirr(total)}</div>
+            <div style={{ padding: 10, textAlign: "center", fontSize: 14, fontWeight: 700, color: "var(--green)" }}>
+              Total: {formatBirr(selectedTotal)}
             </div>
           )}
-        </>
+        </div>
       ) : (
-        <>
-          <div>
-            <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Amount (ETB)</label>
-            <input
-              type="number" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)}
-              placeholder="0"
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--surface-border)", background: "var(--bg)", color: "var(--white)", fontSize: 16, outline: "none", boxSizing: "border-box" }}
-            />
-          </div>
-          <div>
-            <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Memo</label>
-            <textarea
-              value={memo} onChange={(e) => setMemo(e.target.value)}
-              placeholder="Optional note..."
-              rows={3}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--surface-border)", background: "var(--bg)", color: "var(--white)", fontSize: 14, outline: "none", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
-            />
-          </div>
-        </>
+        <div>
+          <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Amount (ETB)</label>
+          <input type="number" inputMode="numeric" value={lumpAmount} onChange={(e) => setLumpAmount(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--surface-border)", background: "var(--bg)", color: "var(--white)", fontSize: 16, outline: "none", boxSizing: "border-box" }} />
+        </div>
       )}
 
-      {/* Payment method */}
       <div>
         <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Payment Method</label>
         <div style={{ display: "flex", gap: 8 }}>
           {(["cash", "bank"] as const).map((m) => (
-            <button key={m} onClick={() => setMethod(m)} style={methodToggle(method === m)}>
-              {m}
-            </button>
+            <button key={m} onClick={() => setMethod(m)} style={{
+              flex: 1, padding: 10, borderRadius: 8, border: "none", cursor: "pointer",
+              fontWeight: 600, fontSize: 14, textTransform: "capitalize",
+              background: method === m ? "var(--accent)" : "var(--bg)",
+              color: method === m ? "var(--white)" : "var(--muted)",
+            }}>{m}</button>
           ))}
         </div>
       </div>
 
-      <button onClick={handleSubmit} disabled={saving} style={{
-        ...btnBase,
+      <button onClick={handleSubmit} disabled={saving || (mode === "per_phone" && selectedIds.length === 0) || (mode === "lump_sum" && !lumpAmount)} style={{
+        padding: 13, borderRadius: 10, border: "none", fontWeight: 700, fontSize: 15,
         background: "var(--green)", color: "var(--white)",
-        opacity: saving ? 0.6 : 1, cursor: saving ? "not-allowed" : "pointer",
+        cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1,
       }}>
-        {saving
-          ? "Collecting..."
-          : tab === "per_phone"
-            ? `Collect ${formatBirr(total)}`
-            : `Collect ${formatBirr(Number(amount) || 0)}`}
+        {saving ? "Collecting..." : "Confirm Collection"}
       </button>
     </div>
   );
 }
 
-/* ─── Sub-view: Give Phone ─── */
-
-function GivePhoneForm({
-  sellerId,
-  onDone,
-}: {
-  sellerId: number;
-  onDone: () => void;
-}) {
-  const [phones, setPhones] = useState<Phone[]>([]);
+function GivePhoneForm({ sellerId, onDone }: { sellerId: number; onDone: () => void }) {
+  const data = useData();
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [assigning, setAssigning] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    setLoading(true);
-    fetch("/api/phones?status=in_stock")
-      .then((r) => r.json())
-      .then((data) => {
-        setPhones(Array.isArray(data) ? data : data.phones || []);
-        setLoading(false);
-      });
-  }, []);
+  const inStockPhones = data.phones.filter((p) => p.status === "in_stock");
 
-  const filtered = phones.filter(
-    (p) =>
-      p.brand.toLowerCase().includes(search.toLowerCase()) ||
-      p.model.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = inStockPhones.filter((p) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return p.brand.toLowerCase().includes(q) || p.model.toLowerCase().includes(q);
+  });
 
   async function handleGive(phoneId: number) {
-    setAssigning(phoneId);
-    await fetch(`/api/phones/${phoneId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "distribute", seller_id: sellerId }),
-    });
-    setAssigning(null);
+    setSaving(true);
+    await data.distributePhone(phoneId, sellerId);
     onDone();
   }
-
-  if (loading) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>Loading...</div>;
 
   return (
     <div>
@@ -383,190 +186,117 @@ function GivePhoneForm({
         placeholder="Search phones..."
         style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--surface-border)", background: "var(--bg)", color: "var(--white)", fontSize: 14, marginBottom: 12, outline: "none", boxSizing: "border-box" }}
       />
-      {filtered.length === 0 && (
-        <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>No in-stock phones found</div>
-      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {filtered.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => handleGive(p.id)}
-            disabled={assigning === p.id}
-            style={{
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-              width: "100%", padding: "12px 14px",
-              background: "var(--bg)", border: "1px solid var(--surface-border)", borderRadius: 10,
-              color: "var(--white)", cursor: assigning === p.id ? "not-allowed" : "pointer",
-              textAlign: "left", opacity: assigning === p.id ? 0.6 : 1,
-            }}
-          >
+          <button key={p.id} onClick={() => !saving && handleGive(p.id)} disabled={saving} style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            width: "100%", padding: "12px 14px",
+            background: "var(--bg)", border: "1px solid var(--surface-border)", borderRadius: 10,
+            color: "var(--white)", fontSize: 14, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", textAlign: "left",
+            opacity: saving ? 0.6 : 1,
+          }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>{p.brand} {p.model}</div>
-              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                {formatBirr(p.asking_price)}
-                {p.storage && <span style={{ marginLeft: 8 }}>{p.storage}</span>}
-              </div>
+              <div>{p.brand} {p.model}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{[p.storage, p.color].filter(Boolean).join(" · ")}</div>
             </div>
-            <span style={{ color: "var(--accent)", fontSize: 12, fontWeight: 600 }}>
-              {assigning === p.id ? "..." : "Give"}
-            </span>
+            <div style={{ color: "var(--accent)", fontSize: 14, fontWeight: 700 }}>{formatBirr(p.asking_price)}</div>
           </button>
         ))}
+        {filtered.length === 0 && <p style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", padding: 20 }}>No phones in stock</p>}
       </div>
     </div>
   );
 }
 
-/* ─── Main Component ─── */
-
 export default function SellerDetail({ sellerId, pushView, onAction }: SellerDetailProps) {
-  const [seller, setSeller] = useState<SellerWithStats | null>(null);
-  const [phones, setPhones] = useState<Phone[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const data = useData();
 
-  const loadData = useCallback(async () => {
-    const res = await fetch(`/api/sellers/${sellerId}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    setSeller(data.seller);
-    setPhones(data.phones || []);
-    setTransactions(data.transactions || []);
-  }, [sellerId]);
+  const seller = data.getSeller(sellerId);
+  const sellerStats = data.getSellerStats(sellerId);
+  const sellerPhones = data.phones.filter((p) => p.seller_id === sellerId && p.status === "with_seller");
+  const sellerTransactions = data.transactions.filter((t) => t.seller_id === sellerId);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  if (!seller) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>Seller not found</div>;
 
-  const handleAction = useCallback(async () => {
-    await loadData();
-    onAction();
-  }, [loadData, onAction]);
-
-  if (!seller) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>Loading...</div>;
-
-  const withSellerPhones = phones.filter((p) => p.status === "with_seller");
+  const totalOwed = sellerPhones.reduce((s, p) => s + p.asking_price, 0);
+  const phoneCount = sellerPhones.length;
 
   return (
     <div>
       {/* Title */}
       <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--white)", margin: 0 }}>
-          {seller.name}
-        </h2>
-        {seller.location && (
-          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{seller.location}</div>
-        )}
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--white)", margin: 0 }}>{seller.name}</h2>
+        {seller.location && <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>{seller.location}</div>}
         {seller.phone_number && (
-          <a href={`tel:${seller.phone_number}`} style={{
-            fontSize: 13, color: "var(--accent)", marginTop: 4, display: "inline-block", textDecoration: "none",
-          }}>
-            <PhoneIcon size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-            {seller.phone_number}
+          <a href={`tel:${seller.phone_number}`} style={{ fontSize: 13, color: "var(--accent)", marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none" }}>
+            <PhoneIcon size={13} />{seller.phone_number}
           </a>
         )}
       </div>
 
       {/* Balance card */}
-      <div style={{
-        padding: 16, background: "var(--bg)", borderRadius: 12,
-        border: "1px solid var(--surface-border)", marginBottom: 16,
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-          <div style={{ textAlign: "center", flex: 1 }}>
-            <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Owed</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)", marginTop: 4 }}>
-              {formatBirr(seller.total_owed)}
-            </div>
-          </div>
-          <div style={{ width: 1, background: "var(--surface-border)" }} />
-          <div style={{ textAlign: "center", flex: 1 }}>
-            <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Phones</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", marginTop: 4 }}>
-              {seller.phones_held}
-            </div>
-          </div>
-          <div style={{ width: 1, background: "var(--surface-border)" }} />
-          <div style={{ textAlign: "center", flex: 1 }}>
-            <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Collected</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "var(--green)", marginTop: 4 }}>
-              {formatBirr(seller.total_collected)}
-            </div>
-          </div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+        <div style={{ flex: 1, padding: "12px 14px", background: "var(--bg)", borderRadius: 10, textAlign: "center" }}>
+          <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Total Owed</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)", marginTop: 4 }}>{formatBirr(totalOwed)}</div>
+        </div>
+        <div style={{ flex: 1, padding: "12px 14px", background: "var(--bg)", borderRadius: 10, textAlign: "center" }}>
+          <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Phones Held</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", marginTop: 4 }}>{phoneCount}</div>
         </div>
       </div>
 
-      {/* Action buttons */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <button
-          onClick={() =>
-            pushView(
-              <CollectPaymentForm
-                sellerId={sellerId}
-                phones={withSellerPhones}
-                onDone={handleAction}
-              />,
+      {/* Memo */}
+      {seller.memo && (
+        <div style={{ padding: "10px 14px", background: "var(--bg)", borderRadius: 10, marginBottom: 16, fontSize: 13, color: "var(--muted)" }}>
+          {seller.memo}
+        </div>
+      )}
+
+      {/* Action Buttons */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {phoneCount > 0 && (
+          <>
+            <button onClick={() => pushView(
+              <SellerPhonesList phones={sellerPhones} pushView={pushView} onRefresh={onAction} />,
+              "Their Phones"
+            )} style={{
+              padding: 13, borderRadius: 10, border: "1px solid var(--surface-border)",
+              fontWeight: 700, fontSize: 15, background: "transparent", color: "var(--white)", cursor: "pointer",
+            }}>
+              Their Phones ({phoneCount})
+            </button>
+            <button onClick={() => pushView(
+              <CollectPaymentForm phones={sellerPhones} sellerId={seller.id} onDone={onAction} />,
               "Collect Payment"
-            )
-          }
-          style={{ ...btnBase, flex: 1, background: "var(--green)", color: "var(--white)" }}
-        >
-          Collect Payment
-        </button>
-        <button
-          onClick={() =>
-            pushView(
-              <GivePhoneForm sellerId={sellerId} onDone={handleAction} />,
-              "Give Phone"
-            )
-          }
-          style={{ ...btnBase, flex: 1, background: "var(--accent)", color: "var(--white)" }}
-        >
+            )} style={{
+              padding: 13, borderRadius: 10, border: "none", fontWeight: 700, fontSize: 15,
+              background: "var(--green)", color: "var(--white)", cursor: "pointer",
+            }}>
+              Collect Payment
+            </button>
+          </>
+        )}
+        <button onClick={() => pushView(
+          <GivePhoneForm sellerId={seller.id} onDone={onAction} />,
+          "Give Phone"
+        )} style={{
+          padding: 13, borderRadius: 10, border: "none", fontWeight: 700, fontSize: 15,
+          background: "var(--accent)", color: "var(--white)", cursor: "pointer",
+        }}>
           Give Phone
         </button>
-        {seller.phone_number && (
-          <a href={`tel:${seller.phone_number}`} style={{
-            ...outlineBtn, flex: 0, padding: "13px 16px", textAlign: "center",
-            textDecoration: "none", display: "flex", alignItems: "center",
+        {sellerTransactions.length > 0 && (
+          <button onClick={() => pushView(
+            <PaymentHistoryList transactions={sellerTransactions} />,
+            "Payment History"
+          )} style={{
+            padding: 13, borderRadius: 10, border: "1px solid var(--surface-border)",
+            fontWeight: 700, fontSize: 15, background: "transparent", color: "var(--muted)", cursor: "pointer",
           }}>
-            <PhoneIcon size={16} />
-          </a>
+            Payment History ({sellerTransactions.length})
+          </button>
         )}
-      </div>
-
-      {/* Navigation buttons */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <button
-          onClick={() =>
-            pushView(
-              <SellerPhonesList
-                sellerId={sellerId}
-                pushView={pushView}
-                onRefresh={handleAction}
-              />,
-              "Their Phones"
-            )
-          }
-          style={{
-            ...outlineBtn,
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}
-        >
-          <span>Their Phones</span>
-          <span style={{ color: "var(--muted)", fontSize: 13 }}>{seller.phones_held} phones &rarr;</span>
-        </button>
-        <button
-          onClick={() =>
-            pushView(
-              <PaymentHistoryList transactions={transactions} />,
-              "Payment History"
-            )
-          }
-          style={{
-            ...outlineBtn,
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}
-        >
-          <span>Payment History</span>
-          <span style={{ color: "var(--muted)", fontSize: 13 }}>{transactions.length} entries &rarr;</span>
-        </button>
       </div>
     </div>
   );

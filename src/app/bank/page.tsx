@@ -1,20 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import type { BankEntry } from "@/lib/types";
 import { formatBirr, formatDate } from "@/lib/format";
 import BottomSheet from "@/components/BottomSheet";
 import FAB from "@/components/FAB";
+import { useData } from "@/lib/DataProvider";
 
 type EntryType = "deposit" | "withdrawal";
-
-const SEED: { type: EntryType; amount: number; memo: string }[] = [
-  { type: "deposit",    amount: 50000, memo: "Starting capital deposit" },
-  { type: "deposit",    amount: 25000, memo: "Phone sale profits - week 1" },
-  { type: "withdrawal", amount:  8000, memo: "Monthly shop rent" },
-  { type: "deposit",    amount: 12000, memo: "Samsung Galaxy S23 sold" },
-  { type: "withdrawal", amount:  3000, memo: "Electricity and water bill" },
-];
 
 // ── Compact row ────────────────────────────────────────────────────────────────
 function EntryRow({ entry }: { entry: BankEntry }) {
@@ -51,9 +44,8 @@ function EntryRow({ entry }: { entry: BankEntry }) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BankPage() {
-  const [entries, setEntries]     = useState<BankEntry[]>([]);
-  const [balance, setBalance]     = useState(0);
-  const [loading, setLoading]     = useState(true);
+  const { bankEntries, getBankBalance, addBankEntry, loading } = useData();
+
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // form
@@ -63,36 +55,12 @@ export default function BankPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
-  const fetchData = useCallback(async (): Promise<BankEntry[]> => {
-    const res  = await fetch("/api/bank");
-    const data = await res.json();
-    const list: BankEntry[] = data.entries ?? [];
-    setEntries(list);
-    setBalance(data.balance ?? 0);
-    return list;
-  }, []);
+  const balance = getBankBalance();
 
-  const seedData = useCallback(async () => {
-    for (const e of SEED) {
-      await fetch("/api/bank", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(e),
-      });
-    }
-    await fetchData();
-  }, [fetchData]);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const list = await fetchData();
-        if (list.length === 0) await seedData();
-      } catch { /* keep previous state */ }
-      finally  { setLoading(false); }
-    })();
-  }, [fetchData, seedData]);
+  // Sort entries newest first for display
+  const entries = [...bankEntries].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 
   const openSheet = () => {
     setEntryType("deposit");
@@ -108,15 +76,9 @@ export default function BankPage() {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch("/api/bank", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: entryType, amount: parsed, memo: memo.trim() || null }),
-      });
-      if (!res.ok) { const b = await res.json(); setError(b.error ?? "Failed to save."); return; }
+      await addBankEntry({ type: entryType, amount: parsed, memo: memo.trim() || null });
       setSheetOpen(false);
-      await fetchData();
-    } catch { setError("Network error. Try again."); }
+    } catch { setError("Something went wrong. Try again."); }
     finally  { setSubmitting(false); }
   };
 
@@ -146,7 +108,7 @@ export default function BankPage() {
             Current Balance
           </div>
           <div style={{ fontSize: 28, fontWeight: 700, color: loading ? "var(--muted)" : "var(--accent)", letterSpacing: "-0.02em" }}>
-            {loading ? "—" : formatBirr(balance)}
+            {loading ? "\u2014" : formatBirr(balance)}
           </div>
         </div>
       </div>
@@ -154,7 +116,7 @@ export default function BankPage() {
       {/* ── Entry list ── */}
       <div style={{ padding: "16px 16px 0", display: "flex", flexDirection: "column", gap: 8 }}>
         {loading ? (
-          <div style={{ textAlign: "center", color: "var(--muted)", padding: "48px 0", fontSize: 15 }}>Loading…</div>
+          <div style={{ textAlign: "center", color: "var(--muted)", padding: "48px 0", fontSize: 15 }}>Loading...</div>
         ) : entries.length === 0 ? (
           <div style={{ textAlign: "center", color: "var(--muted)", padding: "64px 0", fontSize: 15 }}>No bank entries yet</div>
         ) : (
@@ -190,7 +152,7 @@ export default function BankPage() {
 
         {/* Memo */}
         <label style={label}>Memo</label>
-        <textarea placeholder="Optional note…" value={memo}
+        <textarea placeholder="Optional note..." value={memo}
           onChange={(e) => setMemo(e.target.value)} rows={3}
           style={{ ...input, resize: "none", marginBottom: 20, fontFamily: "inherit" }} />
 
@@ -216,7 +178,7 @@ export default function BankPage() {
           opacity: submitting ? 0.5 : 1,
           transition: "opacity 0.15s, background 0.2s",
         }}>
-          {submitting ? "Saving…" : entryType === "deposit" ? "Add Deposit" : "Add Withdrawal"}
+          {submitting ? "Saving..." : entryType === "deposit" ? "Add Deposit" : "Add Withdrawal"}
         </button>
       </BottomSheet>
     </div>

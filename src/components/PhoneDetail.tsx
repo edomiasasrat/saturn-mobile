@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, ReactNode } from "react";
+import { useState, ReactNode } from "react";
 import { Phone as PhoneIcon, Copy, Check } from "lucide-react";
-import type { Phone, Seller } from "@/lib/types";
+import { useData } from "@/lib/DataProvider";
 import { formatBirr, formatDate } from "@/lib/format";
 
 interface PhoneDetailProps {
@@ -26,14 +26,10 @@ const row = (label: string, value: string | null | undefined, color?: string) =>
 };
 
 function SellerPicker({ onPick }: { onPick: (sellerId: number) => void }) {
-  const [sellers, setSellers] = useState<Seller[]>([]);
+  const data = useData();
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    fetch("/api/sellers").then((r) => r.json()).then(setSellers);
-  }, []);
-
-  const filtered = sellers.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = data.sellers.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div>
@@ -61,18 +57,15 @@ function SellerPicker({ onPick }: { onPick: (sellerId: number) => void }) {
   );
 }
 
-function QuickSellForm({ phone, onDone }: { phone: Phone; onDone: () => void }) {
-  const [price, setPrice] = useState(String(phone.asking_price));
+function QuickSellForm({ phoneId, askingPrice, onDone }: { phoneId: number; askingPrice: number; onDone: () => void }) {
+  const data = useData();
+  const [price, setPrice] = useState(String(askingPrice));
   const [method, setMethod] = useState<"cash" | "bank">("cash");
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
     setSaving(true);
-    await fetch(`/api/phones/${phone.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "quick_sell", price: Number(price), payment_method: method }),
-    });
+    await data.quickSellPhone(phoneId, Number(price), method);
     onDone();
   }
 
@@ -107,18 +100,14 @@ function QuickSellForm({ phone, onDone }: { phone: Phone; onDone: () => void }) 
   );
 }
 
-function CollectForm({ phone, onDone }: { phone: Phone; onDone: () => void }) {
+function CollectForm({ phoneId, sellerId, askingPrice, onDone }: { phoneId: number; sellerId: number; askingPrice: number; onDone: () => void }) {
+  const data = useData();
   const [method, setMethod] = useState<"cash" | "bank">("cash");
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
-    if (!phone.seller_id) return;
     setSaving(true);
-    await fetch(`/api/sellers/${phone.seller_id}/collect`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "per_phone", phone_ids: [phone.id], payment_method: method }),
-    });
+    await data.collectPerPhone(sellerId, [phoneId], method);
     onDone();
   }
 
@@ -126,7 +115,7 @@ function CollectForm({ phone, onDone }: { phone: Phone; onDone: () => void }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ padding: 14, background: "var(--bg)", borderRadius: 10, textAlign: "center" }}>
         <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase" }}>Collection Amount</div>
-        <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)", marginTop: 4 }}>{formatBirr(phone.asking_price)}</div>
+        <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)", marginTop: 4 }}>{formatBirr(askingPrice)}</div>
       </div>
       <div>
         <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", display: "block", marginBottom: 6 }}>Payment Method</label>
@@ -153,32 +142,13 @@ function CollectForm({ phone, onDone }: { phone: Phone; onDone: () => void }) {
 }
 
 export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetailProps) {
-  const [phone, setPhone] = useState<Phone | null>(null);
-  const [sellerName, setSellerName] = useState<string | null>(null);
+  const data = useData();
   const [copied, setCopied] = useState(false);
 
-  const loadPhone = useCallback(async () => {
-    const res = await fetch(`/api/phones/${phoneId}`);
-    if (!res.ok) return;
-    const p: Phone = await res.json();
-    setPhone(p);
-    if (p.seller_id) {
-      const sRes = await fetch(`/api/sellers/${p.seller_id}`);
-      if (sRes.ok) {
-        const data = await sRes.json();
-        setSellerName(data.seller?.name || data.name || null);
-      }
-    }
-  }, [phoneId]);
+  const phone = data.getPhone(phoneId);
+  const sellerName = phone?.seller_id ? data.getSeller(phone.seller_id)?.name ?? null : null;
 
-  useEffect(() => { loadPhone(); }, [loadPhone]);
-
-  const handleAction = useCallback(async () => {
-    await loadPhone();
-    onAction();
-  }, [loadPhone, onAction]);
-
-  if (!phone) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>Loading...</div>;
+  if (!phone) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)" }}>Phone not found</div>;
 
   const aging = phone.distributed_at ? Math.floor((Date.now() - new Date(phone.distributed_at).getTime()) / 86400000) : null;
 
@@ -249,11 +219,8 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button onClick={() => pushView(
             <SellerPicker onPick={async (sid) => {
-              await fetch(`/api/phones/${phone.id}`, {
-                method: "PATCH", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "distribute", seller_id: sid }),
-              });
-              handleAction();
+              await data.distributePhone(phone.id, sid);
+              onAction();
             }} />,
             "Give to Seller"
           )} style={{
@@ -263,7 +230,7 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
             Give to Seller
           </button>
           <button onClick={() => pushView(
-            <QuickSellForm phone={phone} onDone={handleAction} />,
+            <QuickSellForm phoneId={phone.id} askingPrice={phone.asking_price} onDone={onAction} />,
             "Quick Sell"
           )} style={{
             padding: 13, borderRadius: 10, border: "1px solid var(--surface-border)",
@@ -273,8 +240,8 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
           </button>
           <button onClick={async () => {
             if (!confirm("Delete this phone?")) return;
-            await fetch(`/api/phones/${phone.id}`, { method: "DELETE" });
-            handleAction();
+            await data.deletePhone(phone.id);
+            onAction();
           }} style={{
             padding: 10, borderRadius: 10, border: "1px solid var(--surface-border)",
             fontWeight: 600, fontSize: 13, background: "transparent", color: "var(--error)", cursor: "pointer",
@@ -287,7 +254,7 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
       {phone.status === "with_seller" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button onClick={() => pushView(
-            <CollectForm phone={phone} onDone={handleAction} />,
+            <CollectForm phoneId={phone.id} sellerId={phone.seller_id!} askingPrice={phone.asking_price} onDone={onAction} />,
             "Collect Payment"
           )} style={{
             padding: 13, borderRadius: 10, border: "none", fontWeight: 700, fontSize: 15,
@@ -296,11 +263,8 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
             Collect Payment
           </button>
           <button onClick={async () => {
-            await fetch(`/api/phones/${phone.id}`, {
-              method: "PATCH", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "return" }),
-            });
-            handleAction();
+            await data.returnPhone(phone.id);
+            onAction();
           }} style={{
             padding: 13, borderRadius: 10, border: "1px solid var(--surface-border)",
             fontWeight: 700, fontSize: 15, background: "transparent", color: "var(--white)", cursor: "pointer",

@@ -1,27 +1,41 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo } from "react";
 import { Search } from "lucide-react";
+import ModalDrilldown from "@/components/ModalDrilldown";
+import SortDropdown from "@/components/SortDropdown";
+import SellerDetail from "@/components/SellerDetail";
 import BottomSheet from "@/components/BottomSheet";
 import FAB from "@/components/FAB";
 import { formatBirr } from "@/lib/format";
-import type { Seller, Phone } from "@/lib/types";
+import { useData } from "@/lib/DataProvider";
 
-const SEEDS: { name: string; phone_number: string; location: string }[] = [
-  { name: "Abebe Store", phone_number: "", location: "Merkato" },
-  { name: "Sara Electronics", phone_number: "", location: "Piazza" },
-  { name: "Daniel Phones", phone_number: "", location: "Bole" },
+const SORT_OPTIONS = [
+  { key: "name", label: "Name" },
+  { key: "balance", label: "Balance" },
+  { key: "phones", label: "Phones" },
+  { key: "activity", label: "Activity" },
 ];
 
+interface SellerRow {
+  id: number;
+  name: string;
+  phone_number: string | null;
+  location: string | null;
+  memo: string | null;
+  created_at: string;
+  phoneCount: number;
+  totalOwed: number;
+  lastActivity: string | null;
+}
+
 export default function SellersPage() {
-  const router = useRouter();
-  const [sellers, setSellers] = useState<Seller[]>([]);
-  const [phones, setPhones] = useState<Phone[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { sellers, phones, transactions, addSeller, loading, refresh } = useData();
   const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState("name");
   const [sheetOpen, setSheetOpen] = useState(false);
-  const seededRef = useRef(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalIndex, setModalIndex] = useState(0);
 
   // Form state
   const [name, setName] = useState("");
@@ -31,53 +45,56 @@ export default function SellersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const load = useCallback(async (skipSeed = false) => {
-    setLoading(true);
-    try {
-      const [sellersRes, phonesRes] = await Promise.all([
-        fetch("/api/sellers"),
-        fetch("/api/phones?status=with_seller"),
-      ]);
-      const sellersData: Seller[] = await sellersRes.json();
-      const phonesData: Phone[] = await phonesRes.json();
+  // Compute per-seller stats and build display list
+  const displayList: SellerRow[] = useMemo(() => {
+    const rows = sellers.map((seller) => {
+      const sellerPhones = phones.filter((p) => p.seller_id === seller.id && p.status === "with_seller");
+      const phoneCount = sellerPhones.length;
+      const totalOwed = sellerPhones.reduce((sum, p) => sum + p.asking_price, 0);
 
-      if (!skipSeed && !seededRef.current && sellersData.length === 0) {
-        seededRef.current = true;
-        await Promise.all(
-          SEEDS.map((s) =>
-            fetch("/api/sellers", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(s),
-            })
-          )
-        );
-        await load(true);
-        return;
-      }
+      // Find last transaction for this seller
+      const sellerTxs = transactions.filter((t) => t.seller_id === seller.id);
+      const lastActivity = sellerTxs.length > 0
+        ? sellerTxs.reduce((latest, t) => t.created_at > latest ? t.created_at : latest, sellerTxs[0].created_at)
+        : null;
 
-      setSellers(sellersData);
-      setPhones(phonesData);
-    } catch {
-      // keep previous data
-    } finally {
-      setLoading(false);
+      return { ...seller, phoneCount, totalOwed, lastActivity };
+    });
+
+    // Search
+    let filtered = rows;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      filtered = rows.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          (s.location && s.location.toLowerCase().includes(q))
+      );
     }
-  }, []);
 
-  useEffect(() => { load(); }, [load]);
+    // Sort
+    const sorted = [...filtered];
+    switch (sortKey) {
+      case "name":
+        sorted.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case "balance":
+        sorted.sort((a, b) => b.totalOwed - a.totalOwed);
+        break;
+      case "phones":
+        sorted.sort((a, b) => b.phoneCount - a.phoneCount);
+        break;
+      case "activity":
+        sorted.sort((a, b) => {
+          const aTime = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
+          const bTime = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
+          return bTime - aTime;
+        });
+        break;
+    }
 
-  // Group phones by seller_id
-  const sellerStats = sellers.map((seller) => {
-    const sellerPhones = phones.filter((p) => p.seller_id === seller.id);
-    const phoneCount = sellerPhones.length;
-    const totalOwed = sellerPhones.reduce((sum, p) => sum + p.asking_price, 0);
-    return { ...seller, phoneCount, totalOwed };
-  });
-
-  const filtered = sellerStats.filter((s) =>
-    s.name.toLowerCase().includes(search.toLowerCase())
-  );
+    return sorted;
+  }, [sellers, phones, transactions, search, sortKey]);
 
   const resetForm = () => {
     setName("");
@@ -93,23 +110,14 @@ export default function SellersPage() {
     if (!name.trim()) return setFormError("Name is required.");
     setSubmitting(true);
     try {
-      const res = await fetch("/api/sellers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          phone_number: phoneNumber.trim() || null,
-          location: location.trim() || null,
-          memo: memo.trim() || null,
-        }),
+      await addSeller({
+        name: name.trim(),
+        phone_number: phoneNumber.trim() || null,
+        location: location.trim() || null,
+        memo: memo.trim() || null,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? "Failed to save");
-      }
       setSheetOpen(false);
       resetForm();
-      await load(true);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -137,25 +145,28 @@ export default function SellersPage() {
         background: "var(--surface)",
         borderBottom: "1px solid var(--surface-border)",
       }}>
-        <h1 style={{
-          margin: "0 0 12px", fontSize: 24, fontWeight: 800,
-          color: "var(--white)", letterSpacing: "-0.5px",
-        }}>
-          Sellers
-        </h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <h1 style={{
+            margin: 0, fontSize: 24, fontWeight: 800,
+            color: "var(--white)", letterSpacing: "-0.5px",
+          }}>
+            Sellers
+          </h1>
+          <SortDropdown options={SORT_OPTIONS} value={sortKey} onChange={setSortKey} />
+        </div>
         <div style={{
           display: "flex", alignItems: "center", gap: 8,
           background: "var(--bg)", border: "1px solid var(--surface-border)",
-          borderRadius: 10, padding: "8px 12px",
+          borderRadius: 10, padding: "0 12px",
         }}>
-          <Search size={18} color="var(--muted)" />
+          <Search size={16} color="var(--muted)" />
           <input
             type="text"
-            placeholder="Search sellers..."
+            placeholder="Search name, location..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
-              flex: 1, border: "none", background: "transparent",
+              flex: 1, padding: "10px 0", border: "none", background: "transparent",
               color: "var(--white)", fontSize: 15, outline: "none",
             }}
           />
@@ -163,25 +174,26 @@ export default function SellersPage() {
       </div>
 
       {/* List */}
-      <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column" }}>
         {loading ? (
           <p style={{ textAlign: "center", color: "var(--muted)", padding: "48px 0", fontSize: 15 }}>
             Loading...
           </p>
-        ) : filtered.length === 0 ? (
+        ) : displayList.length === 0 ? (
           <p style={{ textAlign: "center", color: "var(--muted)", padding: "64px 0", fontSize: 15 }}>
             {search ? "No sellers match your search." : "No sellers yet. Tap + to add one."}
           </p>
         ) : (
-          filtered.map((seller) => (
+          displayList.map((seller, idx) => (
             <div
               key={seller.id}
-              onClick={() => router.push(`/sellers/${seller.id}`)}
+              onClick={() => { setModalIndex(idx); setModalOpen(true); }}
               style={{
                 background: "var(--surface)",
                 border: "1px solid var(--surface-border)",
                 borderRadius: 10,
                 padding: "12px 14px",
+                marginBottom: 8,
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
@@ -212,6 +224,18 @@ export default function SellersPage() {
       </div>
 
       <FAB onClick={() => { resetForm(); setSheetOpen(true); }} />
+
+      {/* Modal Drilldown */}
+      <ModalDrilldown
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        items={displayList}
+        currentIndex={modalIndex}
+        onChangeIndex={setModalIndex}
+        renderContent={(item, pushView) => (
+          <SellerDetail sellerId={item.id} pushView={pushView} onAction={refresh} />
+        )}
+      />
 
       {/* Add Seller Sheet */}
       <BottomSheet open={sheetOpen} onClose={() => { setSheetOpen(false); resetForm(); }} title="Add Seller">

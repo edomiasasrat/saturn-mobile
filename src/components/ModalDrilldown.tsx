@@ -20,7 +20,6 @@ interface ModalDrilldownProps {
 export default function ModalDrilldown({ open, onClose, items, currentIndex, onChangeIndex, renderContent }: ModalDrilldownProps) {
   const [viewStack, setViewStack] = useState<ViewStackItem[]>([]);
 
-  // Reset view stack when item changes or modal closes
   useEffect(() => {
     setViewStack([]);
   }, [currentIndex, open]);
@@ -41,7 +40,6 @@ export default function ModalDrilldown({ open, onClose, items, currentIndex, onC
     if (currentIndex < items.length - 1) onChangeIndex(currentIndex + 1);
   }, [currentIndex, items.length, onChangeIndex]);
 
-  // Close on escape key
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -68,32 +66,6 @@ export default function ModalDrilldown({ open, onClose, items, currentIndex, onC
         }}
       />
 
-      {/* Left Arrow */}
-      {currentIndex > 0 && (
-        <button onClick={goLeft} style={{
-          position: "absolute", left: 4, top: "50%", transform: "translateY(-50%)",
-          width: 36, height: 36, borderRadius: "50%",
-          background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
-          color: "var(--white)", display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", zIndex: 210,
-        }}>
-          <ChevronLeft size={20} />
-        </button>
-      )}
-
-      {/* Right Arrow */}
-      {currentIndex < items.length - 1 && (
-        <button onClick={goRight} style={{
-          position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
-          width: 36, height: 36, borderRadius: "50%",
-          background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
-          color: "var(--white)", display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", zIndex: 210,
-        }}>
-          <ChevronRight size={20} />
-        </button>
-      )}
-
       {/* Card */}
       <div style={{
         position: "relative", zIndex: 205,
@@ -105,21 +77,42 @@ export default function ModalDrilldown({ open, onClose, items, currentIndex, onC
         {/* Header */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "12px 16px", borderBottom: "1px solid var(--surface-border)",
+          padding: "10px 12px", borderBottom: "1px solid var(--surface-border)",
           flexShrink: 0,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {inSubView && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {inSubView ? (
               <button onClick={popView} style={{
                 background: "none", border: "none", color: "var(--accent)", cursor: "pointer",
                 padding: 0, display: "flex", alignItems: "center",
               }}>
-                <ArrowLeft size={20} />
+                <ArrowLeft size={18} />
+              </button>
+            ) : (
+              /* Left arrow in header */
+              <button onClick={goLeft} disabled={currentIndex === 0} style={{
+                background: "none", border: "none", cursor: currentIndex === 0 ? "default" : "pointer",
+                padding: 2, display: "flex", alignItems: "center",
+                color: currentIndex === 0 ? "var(--surface-border)" : "var(--white)",
+                opacity: currentIndex === 0 ? 0.3 : 1,
+              }}>
+                <ChevronLeft size={18} />
               </button>
             )}
-            <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 600 }}>
-              {inSubView ? topView.title : `${currentIndex + 1} of ${items.length}`}
+            <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 600, minWidth: 60, textAlign: "center" }}>
+              {inSubView ? topView.title : `${currentIndex + 1} / ${items.length}`}
             </span>
+            {!inSubView && (
+              /* Right arrow in header */
+              <button onClick={goRight} disabled={currentIndex >= items.length - 1} style={{
+                background: "none", border: "none", cursor: currentIndex >= items.length - 1 ? "default" : "pointer",
+                padding: 2, display: "flex", alignItems: "center",
+                color: currentIndex >= items.length - 1 ? "var(--surface-border)" : "var(--white)",
+                opacity: currentIndex >= items.length - 1 ? 0.3 : 1,
+              }}>
+                <ChevronRight size={18} />
+              </button>
+            )}
           </div>
           <button onClick={onClose} style={{
             background: "none", border: "none", color: "var(--muted)", cursor: "pointer",
