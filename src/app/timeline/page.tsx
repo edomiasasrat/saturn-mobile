@@ -237,7 +237,7 @@ export default function TimelinePage() {
           <PhoneDetail
             phoneId={phoneId}
             pushView={pushView}
-            onAction={refresh}
+            onAction={() => { refresh(); setModalOpen(false); }}
           />
         );
       }

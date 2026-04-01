@@ -315,7 +315,7 @@ export default function StockPage() {
         currentIndex={modalIndex}
         onChangeIndex={setModalIndex}
         renderContent={(item, pushView) => (
-          <PhoneDetail phoneId={item.id} pushView={pushView} onAction={refresh} />
+          <PhoneDetail phoneId={item.id} pushView={pushView} onAction={() => { refresh(); setModalOpen(false); }} />
         )}
       />
 

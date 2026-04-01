@@ -233,7 +233,7 @@ export default function SellersPage() {
         currentIndex={modalIndex}
         onChangeIndex={setModalIndex}
         renderContent={(item, pushView) => (
-          <SellerDetail sellerId={item.id} pushView={pushView} onAction={refresh} />
+          <SellerDetail sellerId={item.id} pushView={pushView} onAction={() => { refresh(); setModalOpen(false); }} />
         )}
       />
 

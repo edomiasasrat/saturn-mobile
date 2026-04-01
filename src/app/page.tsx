@@ -97,7 +97,7 @@ export default function Dashboard() {
         <PhoneDetail
           phoneId={item.id}
           pushView={pushView}
-          onAction={refresh}
+          onAction={() => { refresh(); setModalOpen(false); }}
         />
       );
     }
@@ -150,7 +150,7 @@ export default function Dashboard() {
       <SellerDetail
         sellerId={seller.id}
         pushView={pushView}
-        onAction={refresh}
+        onAction={() => { refresh(); setSellerModalOpen(false); }}
       />
     );
   }
