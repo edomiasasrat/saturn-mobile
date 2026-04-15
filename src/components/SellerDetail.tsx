@@ -212,6 +212,54 @@ function GivePhoneForm({ sellerId, onDone }: { sellerId: number; onDone: () => v
   );
 }
 
+function EditSellerForm({ sellerId, onDone }: { sellerId: number; onDone: () => void }) {
+  const data = useData();
+  const seller = data.getSeller(sellerId);
+  const [name, setName] = useState(seller?.name || "");
+  const [phoneNumber, setPhoneNumber] = useState(seller?.phone_number || "");
+  const [location, setLocation] = useState(seller?.location || "");
+  const [memo, setMemo] = useState(seller?.memo || "");
+  const [saving, setSaving] = useState(false);
+
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "10px 12px", borderRadius: 8,
+    border: "1px solid var(--surface-border)", background: "var(--bg)",
+    color: "var(--white)", fontSize: 15, outline: "none", boxSizing: "border-box",
+  };
+  const lbl: React.CSSProperties = {
+    display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted)",
+    marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em",
+  };
+
+  async function handleSave() {
+    if (!name.trim()) return;
+    setSaving(true);
+    await data.updateSeller(sellerId, {
+      name: name.trim(),
+      phone_number: phoneNumber.trim() || null,
+      location: location.trim() || null,
+      memo: memo.trim() || null,
+    });
+    onDone();
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div><label style={lbl}>Name *</label><input value={name} onChange={(e) => setName(e.target.value)} style={inp} /></div>
+      <div><label style={lbl}>Phone Number</label><input type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} style={inp} /></div>
+      <div><label style={lbl}>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} style={inp} /></div>
+      <div><label style={lbl}>Memo</label><textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={2} style={{ ...inp, resize: "none", fontFamily: "inherit" }} /></div>
+      <button onClick={handleSave} disabled={saving} style={{
+        padding: 13, borderRadius: 10, border: "none", fontWeight: 700, fontSize: 15,
+        background: "var(--accent)", color: "var(--white)", cursor: saving ? "not-allowed" : "pointer",
+        opacity: saving ? 0.6 : 1,
+      }}>
+        {saving ? "Saving..." : "Save Changes"}
+      </button>
+    </div>
+  );
+}
+
 export default function SellerDetail({ sellerId, pushView, onAction }: SellerDetailProps) {
   const data = useData();
 
@@ -259,6 +307,15 @@ export default function SellerDetail({ sellerId, pushView, onAction }: SellerDet
 
       {/* Action Buttons */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <button onClick={() => pushView(
+          <EditSellerForm sellerId={seller.id} onDone={onAction} />,
+          "Edit Seller"
+        )} style={{
+          padding: 13, borderRadius: 10, border: "1px solid var(--surface-border)",
+          fontWeight: 700, fontSize: 15, background: "transparent", color: "var(--accent)", cursor: "pointer",
+        }}>
+          Edit Details
+        </button>
         {phoneCount > 0 && (
           <>
             <button onClick={() => pushView(
@@ -301,6 +358,23 @@ export default function SellerDetail({ sellerId, pushView, onAction }: SellerDet
             Payment History ({sellerTransactions.length})
           </button>
         )}
+
+        {/* Remove Seller */}
+        <button onClick={async () => {
+          if (phoneCount > 0) {
+            alert(`Cannot remove ${seller.name} — they still have ${phoneCount} phone${phoneCount !== 1 ? "s" : ""}. Return or collect all phones first.`);
+            return;
+          }
+          if (!confirm(`Remove ${seller.name} from your sellers list? This cannot be undone.`)) return;
+          await data.deleteSeller(seller.id);
+          onAction();
+        }} style={{
+          padding: 13, borderRadius: 10, border: "1px solid color-mix(in srgb, var(--error) 40%, transparent)",
+          fontWeight: 700, fontSize: 15, background: "transparent", color: "var(--error)", cursor: "pointer",
+          marginTop: 8,
+        }}>
+          Remove Seller
+        </button>
       </div>
     </div>
   );

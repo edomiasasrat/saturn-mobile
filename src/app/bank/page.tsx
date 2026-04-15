@@ -8,10 +8,19 @@ import FAB from "@/components/FAB";
 import { useData } from "@/lib/DataProvider";
 
 type EntryType = "deposit" | "withdrawal";
+type Currency = "birr" | "usd" | "usdt";
+
+const currencySymbols: Record<Currency, string> = { birr: "ETB", usd: "USD", usdt: "USDT" };
+
+function formatAmount(amount: number, currency: Currency): string {
+  const sym = currencySymbols[currency];
+  return `${sym} ${amount.toLocaleString()}`;
+}
 
 // ── Compact row ────────────────────────────────────────────────────────────────
 function EntryRow({ entry }: { entry: BankEntry }) {
   const isDeposit = entry.type === "deposit";
+  const curr = (entry.currency || "birr") as Currency;
   return (
     <div style={{
       background: "var(--surface)",
@@ -27,16 +36,21 @@ function EntryRow({ entry }: { entry: BankEntry }) {
           {entry.type}
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-          {[entry.memo, formatDate(entry.created_at)].filter(Boolean).join(" · ")}
+          {[entry.bank_name, entry.memo, formatDate(entry.created_at)].filter(Boolean).join(" · ")}
         </div>
       </div>
       <div style={{ textAlign: "right" }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: isDeposit ? "var(--green)" : "var(--error)" }}>
-          {isDeposit ? "+" : "-"}{formatBirr(entry.amount)}
+          {isDeposit ? "+" : "-"}{formatAmount(entry.amount, curr)}
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-          Bal: {formatBirr(entry.balance_after)}
+          Bal: {formatAmount(entry.balance_after, curr)}
         </div>
+        {curr !== "birr" && (
+          <div style={{ fontSize: 10, color: "var(--accent)", marginTop: 2, textTransform: "uppercase", fontWeight: 600 }}>
+            {currencySymbols[curr]}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -44,28 +58,35 @@ function EntryRow({ entry }: { entry: BankEntry }) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BankPage() {
-  const { bankEntries, getBankBalance, addBankEntry, loading } = useData();
+  const { bankEntries, getBankBalance, getAllBankBalances, addBankEntry, loading } = useData();
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [filterCurrency, setFilterCurrency] = useState<Currency | "all">("all");
 
   // form
   const [entryType, setEntryType] = useState<EntryType>("deposit");
   const [amount, setAmount]       = useState("");
   const [memo, setMemo]           = useState("");
+  const [bankName, setBankName]   = useState("");
+  const [currency, setCurrency]   = useState<Currency>("birr");
+  const [exchangeRate, setExchangeRate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
-  const balance = getBankBalance();
+  const balances = getAllBankBalances();
 
-  // Sort entries newest first for display
-  const entries = [...bankEntries].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
+  // Sort entries newest first for display, filter by currency
+  const entries = [...bankEntries]
+    .filter((e) => filterCurrency === "all" || (e.currency || "birr") === filterCurrency)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const openSheet = () => {
     setEntryType("deposit");
     setAmount("");
     setMemo("");
+    setBankName("");
+    setCurrency("birr");
+    setExchangeRate("");
     setError(null);
     setSheetOpen(true);
   };
@@ -75,8 +96,24 @@ export default function BankPage() {
     if (!amount || isNaN(parsed) || parsed <= 0) { setError("Enter a valid amount."); return; }
     setError(null);
     setSubmitting(true);
+
+    // Build memo: include exchange rate info for USD/USDT
+    let finalMemo = memo.trim() || null;
+    if (currency !== "birr" && exchangeRate && !isNaN(parseFloat(exchangeRate))) {
+      const rate = parseFloat(exchangeRate);
+      const birrValue = parsed * rate;
+      const rateNote = `Rate: 1 ${currency.toUpperCase()} = ${rate} ETB → ${parsed} ${currency.toUpperCase()} = ETB ${birrValue.toLocaleString()}`;
+      finalMemo = finalMemo ? `${finalMemo} | ${rateNote}` : rateNote;
+    }
+
     try {
-      await addBankEntry({ type: entryType, amount: parsed, memo: memo.trim() || null });
+      await addBankEntry({
+        type: entryType,
+        amount: parsed,
+        memo: finalMemo,
+        bank_name: bankName.trim() || null,
+        currency,
+      });
       setSheetOpen(false);
     } catch { setError("Something went wrong. Try again."); }
     finally  { setSubmitting(false); }
@@ -103,13 +140,41 @@ export default function BankPage() {
         <h1 style={{ color: "var(--white)", fontSize: 22, fontWeight: 800, margin: "0 0 14px", letterSpacing: "-0.01em" }}>
           Bank
         </h1>
-        <div style={{ background: "var(--bg)", border: "1px solid var(--surface-border)", borderRadius: 14, padding: "14px 16px" }}>
-          <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
-            Current Balance
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: loading ? "var(--muted)" : "var(--white)", letterSpacing: "-0.02em" }}>
-            {loading ? "\u2014" : formatBirr(balance)}
-          </div>
+
+        {/* Multi-currency balances */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {([
+            { key: "birr" as Currency, label: "ETB", bal: balances.birr },
+            { key: "usd" as Currency, label: "USD", bal: balances.usd },
+            { key: "usdt" as Currency, label: "USDT", bal: balances.usdt },
+          ]).map((c) => (
+            <div key={c.key} style={{
+              flex: 1, background: "var(--bg)", border: "1px solid var(--surface-border)",
+              borderRadius: 12, padding: "10px 12px", textAlign: "center",
+            }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+                {c.label}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: loading ? "var(--muted)" : "var(--white)", letterSpacing: "-0.02em" }}>
+                {loading ? "\u2014" : c.bal.toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Currency filter */}
+        <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+          {(["all", "birr", "usd", "usdt"] as const).map((c) => (
+            <button key={c} onClick={() => setFilterCurrency(c)} style={{
+              flex: 1, padding: "7px 0", border: filterCurrency === c ? "none" : "1px solid var(--surface-border)",
+              borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 600, textTransform: "uppercase",
+              background: filterCurrency === c ? "var(--accent)" : "transparent",
+              color: filterCurrency === c ? "var(--white)" : "var(--muted)",
+              transition: "all 0.15s",
+            }}>
+              {c === "all" ? "All" : c === "birr" ? "ETB" : c.toUpperCase()}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -130,7 +195,7 @@ export default function BankPage() {
       <BottomSheet open={sheetOpen} onClose={() => !submitting && setSheetOpen(false)} title="Add Bank Entry">
 
         {/* Toggle */}
-        <div style={{ display: "flex", border: "1px solid var(--surface-border)", borderRadius: 10, overflow: "hidden", marginBottom: 20 }}>
+        <div style={{ display: "flex", border: "1px solid var(--surface-border)", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
           {(["deposit", "withdrawal"] as EntryType[]).map((t) => (
             <button key={t} onClick={() => setEntryType(t)} style={{
               flex: 1, padding: "11px 0", border: "none", cursor: "pointer",
@@ -144,16 +209,61 @@ export default function BankPage() {
           ))}
         </div>
 
+        {/* Currency */}
+        <label style={label}>Currency</label>
+        <div style={{ display: "flex", border: "1px solid var(--surface-border)", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+          {(["birr", "usd", "usdt"] as Currency[]).map((c) => (
+            <button key={c} onClick={() => setCurrency(c)} style={{
+              flex: 1, padding: "10px 0", border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 600, textTransform: "uppercase",
+              background: currency === c ? "var(--accent)" : "var(--surface)",
+              color: currency === c ? "var(--white)" : "var(--muted)",
+              transition: "background 0.15s, color 0.15s",
+            }}>
+              {c === "birr" ? "ETB" : c.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        {/* Bank Name */}
+        <label style={label}>Bank Name</label>
+        <input type="text" placeholder="e.g. CBE, Awash, Telebirr..."
+          value={bankName} onChange={(e) => setBankName(e.target.value)}
+          style={{ ...input, marginBottom: 16 }} />
+
         {/* Amount */}
-        <label style={label}>Amount *</label>
+        <label style={label}>Amount ({currency === "birr" ? "ETB" : currency.toUpperCase()}) *</label>
         <input type="number" inputMode="decimal" placeholder="0.00"
           value={amount} onChange={(e) => setAmount(e.target.value)}
           style={{ ...input, marginBottom: 16 }} />
 
+        {/* Exchange Rate — only for USD/USDT */}
+        {currency !== "birr" && (
+          <>
+            <label style={label}>Exchange Rate (1 {currency.toUpperCase()} = ? ETB)</label>
+            <input type="number" inputMode="decimal" placeholder="e.g. 130"
+              value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)}
+              style={{ ...input, marginBottom: 8 }} />
+            {amount && exchangeRate && !isNaN(parseFloat(amount)) && !isNaN(parseFloat(exchangeRate)) && (
+              <div style={{
+                padding: "10px 14px", marginBottom: 16, borderRadius: 10,
+                background: "color-mix(in srgb, var(--accent) 10%, var(--bg))",
+                border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+                fontSize: 14, color: "var(--white)", fontWeight: 600, textAlign: "center",
+              }}>
+                {parseFloat(amount).toLocaleString()} {currency.toUpperCase()} × {parseFloat(exchangeRate).toLocaleString()} = <span style={{ color: "var(--green)", fontWeight: 700 }}>ETB {(parseFloat(amount) * parseFloat(exchangeRate)).toLocaleString()}</span>
+              </div>
+            )}
+            {!(amount && exchangeRate && !isNaN(parseFloat(amount)) && !isNaN(parseFloat(exchangeRate))) && (
+              <div style={{ marginBottom: 16 }} />
+            )}
+          </>
+        )}
+
         {/* Memo */}
         <label style={label}>Memo</label>
         <textarea placeholder="Optional note..." value={memo}
-          onChange={(e) => setMemo(e.target.value)} rows={3}
+          onChange={(e) => setMemo(e.target.value)} rows={2}
           style={{ ...input, resize: "none", marginBottom: 20, fontFamily: "inherit" }} />
 
         {/* Error */}

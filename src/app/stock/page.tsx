@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Search } from "lucide-react";
 import ModalDrilldown from "@/components/ModalDrilldown";
 import SortDropdown from "@/components/SortDropdown";
@@ -80,6 +80,15 @@ export default function StockPage() {
   const [memo, setMemo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Autocomplete suggestions from existing phones
+  const uniqueBrands = useMemo(() => [...new Set(phones.map((p) => p.brand))].sort(), [phones]);
+  const modelsForBrand = useMemo(() => {
+    if (!brand.trim()) return [...new Set(phones.map((p) => p.model))].sort();
+    return [...new Set(phones.filter((p) => p.brand.toLowerCase() === brand.toLowerCase()).map((p) => p.model))].sort();
+  }, [phones, brand]);
+  const uniqueStorages = useMemo(() => [...new Set(phones.map((p) => p.storage).filter(Boolean))].sort(), [phones]);
+  const uniqueColors = useMemo(() => [...new Set(phones.map((p) => p.color).filter(Boolean))].sort(), [phones]);
 
   // Computed list: filter -> search -> sort
   const displayList = useMemo(() => {
@@ -326,13 +335,22 @@ export default function StockPage() {
           {/* Brand */}
           <div style={{ marginBottom: 14 }}>
             <label style={lbl} htmlFor="ph-brand">Brand *</label>
-            <input id="ph-brand" type="text" placeholder="Samsung, Apple..." value={brand} onChange={(e) => setBrand(e.target.value)} style={inp} required />
+            <input id="ph-brand" type="text" list="brand-suggestions" placeholder="Samsung, Apple..."
+              value={brand} onChange={(e) => setBrand(e.target.value)} style={inp} required autoComplete="off" />
+            <datalist id="brand-suggestions">
+              {uniqueBrands.map((b) => <option key={b} value={b} />)}
+            </datalist>
           </div>
 
           {/* Model */}
           <div style={{ marginBottom: 14 }}>
             <label style={lbl} htmlFor="ph-model">Model *</label>
-            <input id="ph-model" type="text" placeholder="Galaxy A54, iPhone 13..." value={model} onChange={(e) => setModel(e.target.value)} style={inp} required />
+            <input id="ph-model" type="text" list="model-suggestions" placeholder="Galaxy A54, iPhone 13..."
+              value={model} onChange={(e) => setModel(e.target.value)}
+              style={inp} required autoComplete="off" />
+            <datalist id="model-suggestions">
+              {modelsForBrand.map((m) => <option key={m} value={m} />)}
+            </datalist>
           </div>
 
           {/* IMEI */}
@@ -345,11 +363,19 @@ export default function StockPage() {
           <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
             <div style={{ flex: 1 }}>
               <label style={lbl} htmlFor="ph-storage">Storage</label>
-              <input id="ph-storage" type="text" placeholder="128GB" value={storage} onChange={(e) => setStorage(e.target.value)} style={inp} />
+              <input id="ph-storage" type="text" list="storage-suggestions" placeholder="128GB"
+                value={storage} onChange={(e) => setStorage(e.target.value)} style={inp} autoComplete="off" />
+              <datalist id="storage-suggestions">
+                {uniqueStorages.map((s) => <option key={s} value={s!} />)}
+              </datalist>
             </div>
             <div style={{ flex: 1 }}>
               <label style={lbl} htmlFor="ph-color">Color</label>
-              <input id="ph-color" type="text" placeholder="Black" value={color} onChange={(e) => setColor(e.target.value)} style={inp} />
+              <input id="ph-color" type="text" list="color-suggestions" placeholder="Black"
+                value={color} onChange={(e) => setColor(e.target.value)} style={inp} autoComplete="off" />
+              <datalist id="color-suggestions">
+                {uniqueColors.map((c) => <option key={c} value={c!} />)}
+              </datalist>
             </div>
           </div>
 

@@ -15,7 +15,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!phone_ids || !Array.isArray(phone_ids) || phone_ids.length === 0) {
         return NextResponse.json({ error: "phone_ids required" }, { status: 400 });
       }
-      const txs = await collectPerPhone(Number(id), phone_ids, payment_method);
+      const txs = await collectPerPhone(Number(id), phone_ids, payment_method, body.price_override);
       return NextResponse.json({ transactions: txs }, { status: 201 });
     } else if (mode === "lump_sum") {
       if (!amount || amount <= 0) {

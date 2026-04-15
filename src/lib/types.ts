@@ -43,8 +43,36 @@ export interface BankEntry {
   type: "deposit" | "withdrawal";
   amount: number;
   memo: string | null;
+  bank_name: string | null;
+  currency: "birr" | "usd" | "usdt";
   balance_after: number;
   created_at: string;
+}
+
+export interface Loan {
+  id: number;
+  person_name: string;
+  phone_number: string | null;
+  original_amount: number;
+  remaining_amount: number;
+  memo: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanPayment {
+  id: number;
+  loan_id: number;
+  amount: number;
+  memo: string | null;
+  created_at: string;
+}
+
+export interface PhoneActivity {
+  bought: number;
+  sold: number;
+  sold_by_me: number;
+  sold_by_sellers: number;
 }
 
 export interface SellerWithStats extends Seller {

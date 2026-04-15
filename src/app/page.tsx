@@ -5,6 +5,8 @@ import StatCard from "@/components/StatCard";
 import ModalDrilldown from "@/components/ModalDrilldown";
 import PhoneDetail from "@/components/PhoneDetail";
 import SellerDetail from "@/components/SellerDetail";
+import BottomSheet from "@/components/BottomSheet";
+import FAB from "@/components/FAB";
 import { formatBirr, formatDate } from "@/lib/format";
 import { useData } from "@/lib/DataProvider";
 import type { Phone, Transaction, BankEntry, SellerWithStats } from "@/lib/types";
@@ -31,7 +33,7 @@ const detailRow = (label: string, value: string | null | undefined, color?: stri
 type ModalType = "phone" | "transaction" | "bank" | "seller" | null;
 
 export default function Dashboard() {
-  const { getDashboardStats, getTopSellers, phones, transactions, bankEntries, loading, refresh } = useData();
+  const { getDashboardStats, getTopSellers, getPhoneActivity, getProfitLoss, phones, transactions, bankEntries, loading, refresh, addExpense } = useData();
 
   const [period, setPeriod] = useState("today");
 
@@ -46,9 +48,26 @@ export default function Dashboard() {
   const [sellerList, setSellerList] = useState<SellerWithStats[]>([]);
   const [sellerIndex, setSellerIndex] = useState(0);
 
+  // Expense form
+  const [expenseOpen, setExpenseOpen] = useState(false);
+  const [expAmount, setExpAmount] = useState("");
+  const [expDesc, setExpDesc] = useState("");
+  const [expCategory, setExpCategory] = useState("other");
+  const [expPayment, setExpPayment] = useState<"cash" | "bank">("cash");
+  const [expMemo, setExpMemo] = useState("");
+  const [expSubmitting, setExpSubmitting] = useState(false);
+  const [expError, setExpError] = useState<string | null>(null);
+
   // Computed instantly from context
   const stats = getDashboardStats(period);
   const topSellers = getTopSellers();
+  const phoneActivity = getPhoneActivity(period);
+  const pnl = getProfitLoss(period);
+
+  // P&L for all three periods
+  const pnlToday = getProfitLoss("today");
+  const pnlWeek = getProfitLoss("week");
+  const pnlMonth = getProfitLoss("month");
 
   /* ─── Stat card tap handlers ─── */
 
@@ -170,9 +189,12 @@ export default function Dashboard() {
         top: 0,
         zIndex: 10,
       }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: 0 }}>
-          Saturn Mobile
-        </h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img src="/saturn-logo.svg" alt="Saturn" width={32} height={32} />
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: 0 }}>
+            Saturn Mobile
+          </h1>
+        </div>
         <div style={{
           marginTop: 12,
           background: "var(--bg)",
@@ -239,6 +261,86 @@ export default function Dashboard() {
             </div>
             <div onClick={() => openTransactionModal()} style={{ cursor: "pointer" }}>
               <StatCard label="Profit" value={formatBirr(stats.net_profit)} color={stats.net_profit >= 0 ? "var(--green)" : "var(--amber)"} />
+            </div>
+          </div>
+        )}
+
+        {/* ── Profit & Loss ── */}
+        {!loading && (
+          <div style={{ marginTop: 20 }}>
+            <h2 style={{
+              fontSize: 13, fontWeight: 600, color: "var(--muted)",
+              textTransform: "uppercase", letterSpacing: "0.5px", margin: "0 0 10px",
+            }}>
+              Profit & Loss
+            </h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {([
+                { label: "Today", data: pnlToday },
+                { label: "This Week", data: pnlWeek },
+                { label: "This Month", data: pnlMonth },
+              ]).map((row) => (
+                <div key={row.label} style={{
+                  background: "var(--surface)", border: "1px solid var(--surface-border)",
+                  borderRadius: 10, padding: "12px 14px",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--white)" }}>{row.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                      In: {formatBirr(row.data.income)} &middot; Out: {formatBirr(row.data.expenses)}
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 16, fontWeight: 700,
+                    color: row.data.profit >= 0 ? "var(--green)" : "var(--error)",
+                  }}>
+                    {row.data.profit >= 0 ? "+" : ""}{formatBirr(row.data.profit)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Phone Activity ── */}
+        {!loading && (
+          <div style={{ marginTop: 20 }}>
+            <h2 style={{
+              fontSize: 13, fontWeight: 600, color: "var(--muted)",
+              textTransform: "uppercase", letterSpacing: "0.5px", margin: "0 0 10px",
+            }}>
+              Phone Activity ({periods.find((p) => p.key === period)?.label})
+            </h2>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div style={{
+                background: "var(--surface)", border: "1px solid var(--surface-border)",
+                borderRadius: 10, padding: "14px", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--white)" }}>{phoneActivity.bought}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", marginTop: 4 }}>Bought</div>
+              </div>
+              <div style={{
+                background: "var(--surface)", border: "1px solid var(--surface-border)",
+                borderRadius: 10, padding: "14px", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--green)" }}>{phoneActivity.sold}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", marginTop: 4 }}>Sold</div>
+              </div>
+              <div style={{
+                background: "var(--surface)", border: "1px solid var(--surface-border)",
+                borderRadius: 10, padding: "14px", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--accent)" }}>{phoneActivity.sold_by_me}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", marginTop: 4 }}>Sold by Me</div>
+              </div>
+              <div style={{
+                background: "var(--surface)", border: "1px solid var(--surface-border)",
+                borderRadius: 10, padding: "14px", textAlign: "center",
+              }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--amber)" }}>{phoneActivity.sold_by_sellers}</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", marginTop: 4 }}>Sold by Sellers</div>
+              </div>
             </div>
           </div>
         )}
@@ -310,6 +412,109 @@ export default function Dashboard() {
         onChangeIndex={setSellerIndex}
         renderContent={renderSellerContent}
       />
+
+      {/* Add Expense FAB */}
+      <FAB onClick={() => {
+        setExpAmount(""); setExpDesc(""); setExpCategory("other");
+        setExpPayment("cash"); setExpMemo(""); setExpError(null);
+        setExpenseOpen(true);
+      }} />
+
+      {/* Add Expense Sheet */}
+      <BottomSheet open={expenseOpen} onClose={() => !expSubmitting && setExpenseOpen(false)} title="Add Expense">
+        {(() => {
+          const inp: React.CSSProperties = {
+            width: "100%", padding: "10px 12px", border: "1px solid var(--surface-border)",
+            borderRadius: 8, fontSize: 15, background: "var(--bg)", color: "var(--white)",
+            boxSizing: "border-box" as const, outline: "none",
+          };
+          const lbl: React.CSSProperties = {
+            display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted)",
+            marginBottom: 6, textTransform: "uppercase" as const, letterSpacing: "0.04em",
+          };
+          const categories = [
+            { value: "rent", label: "Rent" },
+            { value: "utilities", label: "Utilities" },
+            { value: "transport", label: "Transport" },
+            { value: "purchase", label: "Purchase" },
+            { value: "other", label: "Other" },
+          ];
+
+          async function handleExpenseSubmit() {
+            const parsed = parseFloat(expAmount);
+            if (!expAmount || isNaN(parsed) || parsed <= 0) { setExpError("Enter a valid amount."); return; }
+            if (!expDesc.trim()) { setExpError("Description is required."); return; }
+            setExpError(null);
+            setExpSubmitting(true);
+            try {
+              await addExpense({
+                amount: parsed,
+                description: expDesc.trim(),
+                memo: expMemo.trim() || null,
+                category: expCategory,
+                payment_method: expPayment,
+              });
+              setExpenseOpen(false);
+            } catch { setExpError("Something went wrong."); }
+            finally { setExpSubmitting(false); }
+          }
+
+          return (
+            <>
+              <label style={lbl}>Amount *</label>
+              <input type="number" inputMode="decimal" placeholder="0.00"
+                value={expAmount} onChange={(e) => setExpAmount(e.target.value)}
+                style={{ ...inp, marginBottom: 14 }} />
+
+              <label style={lbl}>Description *</label>
+              <input type="text" placeholder="What was this for?"
+                value={expDesc} onChange={(e) => setExpDesc(e.target.value)}
+                style={{ ...inp, marginBottom: 14 }} />
+
+              <label style={lbl}>Category</label>
+              <select value={expCategory} onChange={(e) => setExpCategory(e.target.value)}
+                style={{ ...inp, marginBottom: 14 }}>
+                {categories.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+
+              <label style={lbl}>Payment Method</label>
+              <div style={{ display: "flex", border: "1px solid var(--surface-border)", borderRadius: 10, overflow: "hidden", marginBottom: 14 }}>
+                {(["cash", "bank"] as const).map((m) => (
+                  <button key={m} type="button" onClick={() => setExpPayment(m)} style={{
+                    flex: 1, padding: "10px 0", border: "none", cursor: "pointer",
+                    fontSize: 14, fontWeight: 600, textTransform: "capitalize",
+                    background: expPayment === m ? "var(--accent)" : "var(--surface)",
+                    color: expPayment === m ? "var(--white)" : "var(--muted)",
+                  }}>{m}</button>
+                ))}
+              </div>
+
+              <label style={lbl}>Memo</label>
+              <textarea placeholder="Optional note..." value={expMemo}
+                onChange={(e) => setExpMemo(e.target.value)} rows={2}
+                style={{ ...inp, resize: "none" as const, marginBottom: 16, fontFamily: "inherit" }} />
+
+              {expError && (
+                <div style={{
+                  color: "var(--error)", fontSize: 13, marginBottom: 12, padding: "8px 12px",
+                  borderRadius: 8, background: "color-mix(in srgb, var(--error) 10%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--error) 20%, transparent)",
+                }}>{expError}</div>
+              )}
+
+              <button type="button" onClick={handleExpenseSubmit} disabled={expSubmitting} style={{
+                width: "100%", padding: 14, borderRadius: 12, border: "none",
+                cursor: expSubmitting ? "not-allowed" : "pointer",
+                fontSize: 16, fontWeight: 700, color: "var(--white)",
+                background: expSubmitting ? "var(--surface)" : "var(--accent)",
+                opacity: expSubmitting ? 0.5 : 1,
+              }}>
+                {expSubmitting ? "Saving..." : "Add Expense"}
+              </button>
+            </>
+          );
+        })()}
+      </BottomSheet>
     </div>
   );
 }

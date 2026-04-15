@@ -71,28 +71,7 @@ export default function PinGate({ children }: { children: ReactNode }) {
     }}>
       {/* Saturn Planet Logo */}
       <div style={{ marginBottom: 32 }}>
-        <svg width="100" height="100" viewBox="0 0 100 100" fill="none">
-          {/* Planet body */}
-          <circle cx="50" cy="50" r="28" fill="#E63232" />
-          <circle cx="50" cy="50" r="28" fill="url(#planetGrad)" />
-          {/* Ring */}
-          <ellipse cx="50" cy="50" rx="46" ry="14" stroke="#E63232" strokeWidth="3" fill="none" opacity="0.8"
-            transform="rotate(-20 50 50)" />
-          <ellipse cx="50" cy="50" rx="46" ry="14" stroke="#E63232" strokeWidth="1.5" fill="none" opacity="0.3"
-            transform="rotate(-20 50 50)" strokeDasharray="4 3" />
-          {/* Planet shadow overlay */}
-          <circle cx="50" cy="50" r="28" fill="url(#shadowGrad)" />
-          <defs>
-            <radialGradient id="planetGrad" cx="40%" cy="35%">
-              <stop offset="0%" stopColor="#FF4444" stopOpacity="0.6" />
-              <stop offset="100%" stopColor="#E63232" stopOpacity="0" />
-            </radialGradient>
-            <linearGradient id="shadowGrad" x1="30%" y1="0%" x2="70%" y2="100%">
-              <stop offset="0%" stopColor="transparent" />
-              <stop offset="60%" stopColor="rgba(0,0,0,0.4)" />
-            </linearGradient>
-          </defs>
-        </svg>
+        <img src="/saturn-logo.svg" alt="Saturn" width={100} height={100} />
       </div>
 
       {/* Brand name */}

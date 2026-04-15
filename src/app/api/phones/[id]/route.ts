@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPhone, distributePhone, returnPhone, quickSellPhone, deletePhone } from "@/lib/db";
+import { getPhone, distributePhone, returnPhone, quickSellPhone, deletePhone, updatePhone } from "@/lib/db";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -28,6 +28,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
       const result = await quickSellPhone(Number(id), Number(body.price), body.payment_method);
       return NextResponse.json(result);
+    }
+    if (body.action === "update") {
+      const phone = await updatePhone(Number(id), body);
+      return NextResponse.json(phone);
     }
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (e: unknown) {

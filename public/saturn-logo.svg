@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Planet body -->
+  <circle cx="32" cy="32" r="16" fill="url(#planet)"/>
+  <!-- Ring behind -->
+  <ellipse cx="32" cy="32" rx="30" ry="10" stroke="url(#ring)" stroke-width="3" fill="none" opacity="0.3"/>
+  <!-- Ring in front -->
+  <path d="M2 32 Q32 22 62 32" stroke="url(#ring)" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="planet" x1="16" y1="16" x2="48" y2="48">
+      <stop offset="0%" stop-color="#FF4444"/>
+      <stop offset="100%" stop-color="#E63232"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="2" y1="32" x2="62" y2="32">
+      <stop offset="0%" stop-color="#FF6666"/>
+      <stop offset="50%" stop-color="#E63232"/>
+      <stop offset="100%" stop-color="#FF6666"/>
+    </linearGradient>
+  </defs>
+</svg>

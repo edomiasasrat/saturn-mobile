@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBankEntries, getBankBalance, addBankEntry } from "@/lib/db";
+import { getBankEntries, getAllBankBalances, addBankEntry } from "@/lib/db";
 
 export async function GET() {
-  const [entries, balance] = await Promise.all([getBankEntries(), getBankBalance()]);
-  return NextResponse.json({ entries, balance });
+  const [entries, balances] = await Promise.all([getBankEntries(), getAllBankBalances()]);
+  return NextResponse.json({ entries, balances });
 }
 
 export async function POST(req: NextRequest) {
@@ -22,6 +22,8 @@ export async function POST(req: NextRequest) {
     type,
     amount: Number(amount),
     memo: body.memo ?? null,
+    bank_name: body.bank_name ?? null,
+    currency: body.currency ?? "birr",
   });
 
   return NextResponse.json(entry, { status: 201 });

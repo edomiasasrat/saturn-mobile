@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import type { Phone, Transaction, BankEntry, Seller, SellerWithStats, DashboardStats } from "./types";
+import type { Phone, Transaction, BankEntry, Seller, SellerWithStats, DashboardStats, PhoneActivity, Loan, LoanPayment } from "./types";
 
 const client = createClient({
   url: process.env.TURSO_DATABASE_URL!,
@@ -63,18 +63,50 @@ async function initDb() {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )`,
 
-      // Bank entries (unchanged)
+      // Loans
+      `CREATE TABLE IF NOT EXISTS saturn_loans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        person_name TEXT NOT NULL,
+        phone_number TEXT,
+        original_amount INTEGER NOT NULL,
+        remaining_amount INTEGER NOT NULL,
+        memo TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+
+      // Loan payments
+      `CREATE TABLE IF NOT EXISTS saturn_loan_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        loan_id INTEGER NOT NULL REFERENCES saturn_loans(id) ON DELETE CASCADE,
+        amount INTEGER NOT NULL,
+        memo TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+
+      // Bank entries
       `CREATE TABLE IF NOT EXISTS saturn_bank_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL CHECK(type IN ('deposit', 'withdrawal')),
         amount INTEGER NOT NULL,
         memo TEXT,
+        bank_name TEXT,
+        currency TEXT NOT NULL DEFAULT 'birr' CHECK(currency IN ('birr', 'usd', 'usdt')),
         balance_after INTEGER NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )`,
     ],
     "write"
   );
+
+  // Safe column additions for existing databases
+  const alterStatements = [
+    "ALTER TABLE saturn_bank_entries ADD COLUMN bank_name TEXT",
+    "ALTER TABLE saturn_bank_entries ADD COLUMN currency TEXT NOT NULL DEFAULT 'birr'",
+  ];
+  for (const sql of alterStatements) {
+    try { await client.execute(sql); } catch { /* column already exists */ }
+  }
 }
 
 function rowTo<T>(row: Record<string, unknown>): T {
@@ -131,6 +163,17 @@ export async function addSeller(data: { name: string; phone_number: string | nul
   return rowTo<Seller>(result.rows[0]);
 }
 
+export async function updateSeller(id: number, data: { name?: string; phone_number?: string | null; location?: string | null; memo?: string | null }): Promise<Seller> {
+  await ensureInit();
+  const seller = await getSeller(id);
+  if (!seller) throw new Error("Seller not found");
+  await client.execute({
+    sql: "UPDATE saturn_sellers SET name = ?, phone_number = ?, location = ?, memo = ? WHERE id = ?",
+    args: [data.name ?? seller.name, data.phone_number ?? seller.phone_number, data.location ?? seller.location, data.memo ?? seller.memo, id],
+  });
+  return (await getSeller(id))!;
+}
+
 export async function deleteSeller(id: number): Promise<void> {
   await ensureInit();
   await client.execute({ sql: "DELETE FROM saturn_sellers WHERE id = ?", args: [id] });
@@ -165,7 +208,16 @@ export async function addPhone(data: {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     args: [data.brand, data.model, data.imei, data.storage, data.color, data.condition, data.cost_price, data.asking_price, data.memo],
   });
-  return rowTo<Phone>(result.rows[0]);
+  const phone = rowTo<Phone>(result.rows[0]);
+
+  // Auto-create purchase expense so capital tracks money spent
+  await client.execute({
+    sql: `INSERT INTO saturn_transactions (type, amount, description, memo, phone_id, category, payment_method)
+          VALUES ('expense', ?, ?, NULL, ?, 'purchase', 'cash')`,
+    args: [data.cost_price, `Purchased: ${data.brand} ${data.model}`, phone.id],
+  });
+
+  return phone;
 }
 
 export async function distributePhone(phoneId: number, sellerId: number): Promise<Phone> {
@@ -212,6 +264,25 @@ export async function quickSellPhone(phoneId: number, actualPrice: number, payme
   return { phone: updated!, transaction: rowTo<Transaction>(txRes.rows[0]) };
 }
 
+export async function updatePhone(id: number, data: {
+  brand?: string; model?: string; imei?: string | null; storage?: string | null;
+  color?: string | null; condition?: string; cost_price?: number; asking_price?: number; memo?: string | null;
+}): Promise<Phone> {
+  await ensureInit();
+  const phone = await getPhone(id);
+  if (!phone) throw new Error("Phone not found");
+  await client.execute({
+    sql: `UPDATE saturn_phones SET brand = ?, model = ?, imei = ?, storage = ?, color = ?, condition = ?, cost_price = ?, asking_price = ?, memo = ? WHERE id = ?`,
+    args: [
+      data.brand ?? phone.brand, data.model ?? phone.model, data.imei ?? phone.imei,
+      data.storage ?? phone.storage, data.color ?? phone.color, data.condition ?? phone.condition,
+      data.cost_price ?? phone.cost_price, data.asking_price ?? phone.asking_price,
+      data.memo ?? phone.memo, id,
+    ],
+  });
+  return (await getPhone(id))!;
+}
+
 export async function deletePhone(id: number): Promise<void> {
   await ensureInit();
   await client.execute({ sql: "DELETE FROM saturn_phones WHERE id = ?", args: [id] });
@@ -219,9 +290,10 @@ export async function deletePhone(id: number): Promise<void> {
 
 // ── Collections ──────────────────────────────────────────────────────────────
 
-export async function collectPerPhone(sellerId: number, phoneIds: number[], paymentMethod: string): Promise<Transaction[]> {
+export async function collectPerPhone(sellerId: number, phoneIds: number[], paymentMethod: string, priceOverride?: number): Promise<Transaction[]> {
   await ensureInit();
   const transactions: Transaction[] = [];
+  const isSingleWithOverride = phoneIds.length === 1 && priceOverride != null;
 
   for (const pid of phoneIds) {
     const phone = await getPhone(pid);
@@ -232,10 +304,11 @@ export async function collectPerPhone(sellerId: number, phoneIds: number[], paym
       args: [pid],
     });
 
+    const amount = isSingleWithOverride ? priceOverride : phone.asking_price;
     const txRes = await client.execute({
       sql: `INSERT INTO saturn_transactions (type, amount, description, memo, phone_id, seller_id, category, payment_method)
             VALUES ('income', ?, ?, NULL, ?, ?, 'collection', ?) RETURNING *`,
-      args: [phone.asking_price, `Collection: ${phone.brand} ${phone.model}`, pid, sellerId, paymentMethod],
+      args: [amount, `Collection: ${phone.brand} ${phone.model}`, pid, sellerId, paymentMethod],
     });
     transactions.push(rowTo<Transaction>(txRes.rows[0]));
   }
@@ -282,14 +355,21 @@ export async function getTransactions(filters?: { type?: string; category?: stri
 }
 
 export async function addTransaction(data: {
-  type: string; amount: number; description: string; memo: string | null; category: string;
+  type: string; amount: number; description: string; memo: string | null; category: string; payment_method?: string;
 }): Promise<Transaction> {
   await ensureInit();
+  const pm = data.payment_method || null;
   const result = await client.execute({
-    sql: `INSERT INTO saturn_transactions (type, amount, description, memo, category)
-          VALUES (?, ?, ?, ?, ?) RETURNING *`,
-    args: [data.type, data.amount, data.description, data.memo, data.category],
+    sql: `INSERT INTO saturn_transactions (type, amount, description, memo, category, payment_method)
+          VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+    args: [data.type, data.amount, data.description, data.memo, data.category, pm],
   });
+
+  // If expense paid from bank, create a bank withdrawal
+  if (data.type === "expense" && pm === "bank") {
+    await addBankEntry({ type: "withdrawal", amount: data.amount, memo: data.description });
+  }
+
   return rowTo<Transaction>(result.rows[0]);
 }
 
@@ -306,21 +386,33 @@ export async function getBankEntries(): Promise<BankEntry[]> {
   return result.rows.map((r) => rowTo<BankEntry>(r));
 }
 
-export async function getBankBalance(): Promise<number> {
+export async function getBankBalance(currency: string = "birr"): Promise<number> {
   await ensureInit();
   const result = await client.execute({
-    sql: "SELECT balance_after FROM saturn_bank_entries ORDER BY created_at DESC LIMIT 1", args: [],
+    sql: "SELECT balance_after FROM saturn_bank_entries WHERE currency = ? ORDER BY created_at DESC LIMIT 1",
+    args: [currency],
   });
   return result.rows.length ? Number((result.rows[0] as unknown as { balance_after: number }).balance_after) : 0;
 }
 
-export async function addBankEntry(data: { type: string; amount: number; memo: string | null }): Promise<BankEntry> {
+export async function getAllBankBalances(): Promise<{ birr: number; usd: number; usdt: number }> {
   await ensureInit();
-  const currentBalance = await getBankBalance();
+  const [birr, usd, usdt] = await Promise.all([
+    getBankBalance("birr"),
+    getBankBalance("usd"),
+    getBankBalance("usdt"),
+  ]);
+  return { birr, usd, usdt };
+}
+
+export async function addBankEntry(data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }): Promise<BankEntry> {
+  await ensureInit();
+  const currency = data.currency || "birr";
+  const currentBalance = await getBankBalance(currency);
   const newBalance = data.type === "deposit" ? currentBalance + data.amount : currentBalance - data.amount;
   const result = await client.execute({
-    sql: "INSERT INTO saturn_bank_entries (type, amount, memo, balance_after) VALUES (?, ?, ?, ?) RETURNING *",
-    args: [data.type, data.amount, data.memo, newBalance],
+    sql: "INSERT INTO saturn_bank_entries (type, amount, memo, bank_name, currency, balance_after) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+    args: [data.type, data.amount, data.memo, data.bank_name ?? null, currency, newBalance],
   });
   return rowTo<BankEntry>(result.rows[0]);
 }
@@ -358,16 +450,17 @@ export async function getDashboardStats(period?: string): Promise<DashboardStats
 
   const bankBalance = await getBankBalance();
 
-  const allIncomeRes = await client.execute({
-    sql: "SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'income'", args: [],
+  // Cash on hand: only count cash income (exclude bank-paid to avoid double-counting with bank balance)
+  const cashIncomeRes = await client.execute({
+    sql: "SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'income' AND (payment_method != 'bank' OR payment_method IS NULL)", args: [],
   });
-  const allIncome = Number((allIncomeRes.rows[0] as unknown as { total: number }).total);
+  const cashIncome = Number((cashIncomeRes.rows[0] as unknown as { total: number }).total);
   const allExpensesRes = await client.execute({
     sql: "SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense'", args: [],
   });
   const allExpenses = Number((allExpensesRes.rows[0] as unknown as { total: number }).total);
 
-  const cashOnHand = allIncome - allExpenses;
+  const cashOnHand = cashIncome - allExpenses;
   const totalCapital = Number(stock.val) + Number(withSellers.val) + bankBalance + cashOnHand;
 
   return {
@@ -394,4 +487,126 @@ export async function getTopSellers(limit: number = 5): Promise<SellerWithStats[
     if (ws) withStats.push(ws);
   }
   return withStats.sort((a, b) => b.total_owed - a.total_owed).slice(0, limit);
+}
+
+// ── Phone Activity Stats ────────────────────────────────────────────────────
+
+export async function getPhoneActivity(period?: string): Promise<PhoneActivity> {
+  await ensureInit();
+
+  let dateFilter = "";
+  const today = new Date().toISOString().split("T")[0];
+  if (period === "today") dateFilter = ` AND date(created_at) = '${today}'`;
+  else if (period === "week") dateFilter = ` AND created_at >= datetime('now', '-7 days')`;
+  else if (period === "month") dateFilter = ` AND created_at >= datetime('now', '-30 days')`;
+
+  let soldDateFilter = "";
+  if (period === "today") soldDateFilter = ` AND date(sold_at) = '${today}'`;
+  else if (period === "week") soldDateFilter = ` AND sold_at >= datetime('now', '-7 days')`;
+  else if (period === "month") soldDateFilter = ` AND sold_at >= datetime('now', '-30 days')`;
+
+  // Phones bought (added to stock) in period
+  const boughtRes = await client.execute({
+    sql: `SELECT COUNT(*) as cnt FROM saturn_phones WHERE 1=1${dateFilter}`, args: [],
+  });
+  const bought = Number((boughtRes.rows[0] as unknown as { cnt: number }).cnt);
+
+  // Phones sold in period
+  const soldRes = await client.execute({
+    sql: `SELECT COUNT(*) as cnt FROM saturn_phones WHERE status = 'sold' AND sold_at IS NOT NULL${soldDateFilter}`, args: [],
+  });
+  const sold = Number((soldRes.rows[0] as unknown as { cnt: number }).cnt);
+
+  // Sold by me (direct_sale) in period
+  let directDateFilter = "";
+  if (period === "today") directDateFilter = ` AND date(t.created_at) = '${today}'`;
+  else if (period === "week") directDateFilter = ` AND t.created_at >= datetime('now', '-7 days')`;
+  else if (period === "month") directDateFilter = ` AND t.created_at >= datetime('now', '-30 days')`;
+
+  const byMeRes = await client.execute({
+    sql: `SELECT COUNT(*) as cnt FROM saturn_transactions t WHERE t.category = 'direct_sale'${directDateFilter}`, args: [],
+  });
+  const soldByMe = Number((byMeRes.rows[0] as unknown as { cnt: number }).cnt);
+
+  // Sold by other sellers (collection) in period
+  const bySellersRes = await client.execute({
+    sql: `SELECT COUNT(*) as cnt FROM saturn_transactions t WHERE t.category = 'collection' AND t.phone_id IS NOT NULL${directDateFilter}`, args: [],
+  });
+  const soldBySellers = Number((bySellersRes.rows[0] as unknown as { cnt: number }).cnt);
+
+  return { bought, sold, sold_by_me: soldByMe, sold_by_sellers: soldBySellers };
+}
+
+// ── Loans ─────────────────────────────────────────────────────────────────────
+
+export async function getLoans(): Promise<Loan[]> {
+  await ensureInit();
+  const result = await client.execute({ sql: "SELECT * FROM saturn_loans ORDER BY created_at DESC", args: [] });
+  return result.rows.map((r) => rowTo<Loan>(r));
+}
+
+export async function getLoan(id: number): Promise<Loan | null> {
+  await ensureInit();
+  const result = await client.execute({ sql: "SELECT * FROM saturn_loans WHERE id = ?", args: [id] });
+  return result.rows.length ? rowTo<Loan>(result.rows[0]) : null;
+}
+
+export async function addLoan(data: { person_name: string; phone_number: string | null; original_amount: number; memo: string | null }): Promise<Loan> {
+  await ensureInit();
+  const result = await client.execute({
+    sql: "INSERT INTO saturn_loans (person_name, phone_number, original_amount, remaining_amount, memo) VALUES (?, ?, ?, ?, ?) RETURNING *",
+    args: [data.person_name, data.phone_number, data.original_amount, data.original_amount, data.memo],
+  });
+  return rowTo<Loan>(result.rows[0]);
+}
+
+export async function updateLoan(id: number, data: { person_name?: string; phone_number?: string | null; memo?: string | null }): Promise<Loan> {
+  await ensureInit();
+  const loan = await getLoan(id);
+  if (!loan) throw new Error("Loan not found");
+  await client.execute({
+    sql: "UPDATE saturn_loans SET person_name = ?, phone_number = ?, memo = ?, updated_at = datetime('now') WHERE id = ?",
+    args: [data.person_name ?? loan.person_name, data.phone_number ?? loan.phone_number, data.memo ?? loan.memo, id],
+  });
+  return (await getLoan(id))!;
+}
+
+export async function deleteLoan(id: number): Promise<void> {
+  await ensureInit();
+  await client.execute({ sql: "DELETE FROM saturn_loan_payments WHERE loan_id = ?", args: [id] });
+  await client.execute({ sql: "DELETE FROM saturn_loans WHERE id = ?", args: [id] });
+}
+
+export async function addLoanPayment(loanId: number, amount: number, memo: string | null): Promise<LoanPayment> {
+  await ensureInit();
+  const loan = await getLoan(loanId);
+  if (!loan) throw new Error("Loan not found");
+  const newRemaining = loan.remaining_amount - amount;
+  await client.execute({
+    sql: "UPDATE saturn_loans SET remaining_amount = ?, updated_at = datetime('now') WHERE id = ?",
+    args: [newRemaining, loanId],
+  });
+  const result = await client.execute({
+    sql: "INSERT INTO saturn_loan_payments (loan_id, amount, memo) VALUES (?, ?, ?) RETURNING *",
+    args: [loanId, amount, memo],
+  });
+  return rowTo<LoanPayment>(result.rows[0]);
+}
+
+export async function getLoanPayments(loanId: number): Promise<LoanPayment[]> {
+  await ensureInit();
+  const result = await client.execute({
+    sql: "SELECT * FROM saturn_loan_payments WHERE loan_id = ? ORDER BY created_at DESC",
+    args: [loanId],
+  });
+  return result.rows.map((r) => rowTo<LoanPayment>(r));
+}
+
+export async function adjustLoanAmount(loanId: number, newRemaining: number): Promise<Loan> {
+  await ensureInit();
+  await client.execute({
+    sql: "UPDATE saturn_loans SET remaining_amount = ?, updated_at = datetime('now') WHERE id = ?",
+    args: [newRemaining, loanId],
+  });
+  return (await getLoan(loanId))!;
 }

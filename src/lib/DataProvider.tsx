@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from "react";
-import type { Phone, Seller, Transaction, BankEntry, DashboardStats, SellerWithStats } from "./types";
+import type { Phone, Seller, Transaction, BankEntry, DashboardStats, SellerWithStats, PhoneActivity, Loan, LoanPayment } from "./types";
 
 const STORAGE_KEY = "saturn_data_v2";
 
@@ -10,6 +10,7 @@ interface DataStore {
   sellers: Seller[];
   transactions: Transaction[];
   bankEntries: BankEntry[];
+  loans: Loan[];
   lastSync: number;
 }
 
@@ -19,6 +20,7 @@ interface DataContextType {
   sellers: Seller[];
   transactions: Transaction[];
   bankEntries: BankEntry[];
+  loans: Loan[];
   loading: boolean;
 
   // Computed
@@ -26,9 +28,12 @@ interface DataContextType {
   getSeller: (id: number) => Seller | undefined;
   getSellerStats: (id: number) => SellerWithStats | undefined;
   getDashboardStats: (period: string) => DashboardStats;
-  getBankBalance: () => number;
+  getBankBalance: (currency?: string) => number;
+  getAllBankBalances: () => { birr: number; usd: number; usdt: number };
   getTopSellers: (limit?: number) => SellerWithStats[];
   getTimelineEvents: () => TimelineEvent[];
+  getPhoneActivity: (period: string) => PhoneActivity;
+  getProfitLoss: (period: string) => { income: number; expenses: number; profit: number };
 
   // Mutations (instant local + async server)
   addPhone: (data: Omit<Phone, "id" | "status" | "seller_id" | "created_at" | "distributed_at" | "sold_at">) => Promise<void>;
@@ -36,13 +41,22 @@ interface DataContextType {
   distributePhone: (phoneId: number, sellerId: number) => Promise<void>;
   returnPhone: (phoneId: number) => Promise<void>;
   quickSellPhone: (phoneId: number, price: number, paymentMethod: string) => Promise<void>;
-  collectPerPhone: (sellerId: number, phoneIds: number[], paymentMethod: string) => Promise<void>;
+  collectPerPhone: (sellerId: number, phoneIds: number[], paymentMethod: string, priceOverride?: number) => Promise<void>;
   collectLumpSum: (sellerId: number, amount: number, paymentMethod: string, memo: string | null) => Promise<void>;
   addSeller: (data: { name: string; phone_number: string | null; location: string | null; memo: string | null }) => Promise<void>;
+  updateSeller: (id: number, data: { name: string; phone_number: string | null; location: string | null; memo: string | null }) => Promise<void>;
   deleteSeller: (id: number) => Promise<void>;
-  addExpense: (data: { amount: number; description: string; memo: string | null; category: string }) => Promise<void>;
+  updatePhone: (id: number, data: { brand: string; model: string; imei: string | null; storage: string | null; color: string | null; condition: string; cost_price: number; asking_price: number; memo: string | null }) => Promise<void>;
+  addExpense: (data: { amount: number; description: string; memo: string | null; category: string; payment_method?: string }) => Promise<void>;
   deleteTransaction: (id: number) => Promise<void>;
-  addBankEntry: (data: { type: string; amount: number; memo: string | null }) => Promise<void>;
+  addBankEntry: (data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }) => Promise<void>;
+
+  // Loans
+  addLoan: (data: { person_name: string; phone_number: string | null; original_amount: number; memo: string | null }) => Promise<void>;
+  updateLoan: (id: number, data: { person_name: string; phone_number: string | null; memo: string | null }) => Promise<void>;
+  deleteLoan: (id: number) => Promise<void>;
+  addLoanPayment: (loanId: number, amount: number, memo: string | null) => Promise<void>;
+  adjustLoanAmount: (loanId: number, newRemaining: number) => Promise<void>;
 
   // Sync
   refresh: () => Promise<void>;
@@ -112,6 +126,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [bankEntries, setBankEntries] = useState<BankEntry[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const nextId = useRef(Date.now()); // local temp IDs until server assigns real ones
   const syncTimer = useRef<NodeJS.Timeout | null>(null);
@@ -135,6 +150,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setSellers(stored.sellers);
       setTransactions(stored.transactions);
       setBankEntries(stored.bankEntries);
+      setLoans(stored.loans || []);
       setLoading(false);
     }
     // Always sync with server (updates localStorage too)
@@ -145,30 +161,33 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading) return;
-    saveToStorage({ phones, sellers, transactions, bankEntries, lastSync: Date.now() });
-  }, [phones, sellers, transactions, bankEntries, loading]);
+    saveToStorage({ phones, sellers, transactions, bankEntries, loans, lastSync: Date.now() });
+  }, [phones, sellers, transactions, bankEntries, loans, loading]);
 
   // ── Server sync ──
 
   async function syncFromServer() {
     try {
-      const [pRes, sRes, tRes, bRes] = await Promise.all([
+      const [pRes, sRes, tRes, bRes, lRes] = await Promise.all([
         fetch("/api/phones"),
         fetch("/api/sellers"),
         fetch("/api/transactions"),
         fetch("/api/bank"),
+        fetch("/api/loans"),
       ]);
-      const [p, s, t, b] = await Promise.all([
+      const [p, s, t, b, l] = await Promise.all([
         pRes.json(),
         sRes.json(),
         tRes.json(),
         bRes.json(),
+        lRes.json(),
       ]);
       setPhones(Array.isArray(p) ? p : []);
       setSellers(Array.isArray(s) ? s : []);
       setTransactions(Array.isArray(t) ? t : []);
       const entries = b.entries || b;
       setBankEntries(Array.isArray(entries) ? entries : []);
+      setLoans(Array.isArray(l) ? l : []);
     } catch {
       // Offline — keep localStorage data
     }
@@ -201,11 +220,20 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [sellers, phones, transactions]);
 
-  const getBankBalance = useCallback((): number => {
-    if (bankEntries.length === 0) return 0;
-    const sorted = [...bankEntries].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const getBankBalance = useCallback((currency: string = "birr"): number => {
+    const filtered = bankEntries.filter((e) => (e.currency || "birr") === currency);
+    if (filtered.length === 0) return 0;
+    const sorted = [...filtered].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     return sorted[0].balance_after;
   }, [bankEntries]);
+
+  const getAllBankBalances = useCallback((): { birr: number; usd: number; usdt: number } => {
+    return {
+      birr: getBankBalance("birr"),
+      usd: getBankBalance("usd"),
+      usdt: getBankBalance("usdt"),
+    };
+  }, [getBankBalance]);
 
   const getDashboardStats = useCallback((period: string): DashboardStats => {
     const now = new Date();
@@ -226,9 +254,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const collections = periodTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
     const expenses = periodTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     const balance = getBankBalance();
-    const allIncome = transactions.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
-    const allExpenses = transactions.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
-    const cashOnHand = allIncome - allExpenses;
+    // Cash on hand: only count cash income (exclude bank-paid income to avoid double-counting with bank balance)
+    const cashIncome = transactions.filter((t) => t.type === "income" && t.payment_method !== "bank").reduce((s, t) => s + t.amount, 0);
+    const cashExpenses = transactions.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    const cashOnHand = cashIncome - cashExpenses;
 
     return {
       phones_in_stock: inStock.length,
@@ -301,17 +330,77 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     return events.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [phones, sellers, transactions, bankEntries]);
 
+  const getPhoneActivity = useCallback((period: string): PhoneActivity => {
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+
+    function inPeriod(dateStr: string | null): boolean {
+      if (!dateStr) return false;
+      if (period === "all") return true;
+      const d = new Date(dateStr);
+      if (period === "today") return dateStr.startsWith(today);
+      if (period === "week") return now.getTime() - d.getTime() < 7 * 86400000;
+      if (period === "month") return now.getTime() - d.getTime() < 30 * 86400000;
+      return true;
+    }
+
+    const bought = phones.filter((p) => inPeriod(p.created_at)).length;
+    const sold = phones.filter((p) => p.status === "sold" && inPeriod(p.sold_at)).length;
+    const soldByMe = transactions.filter((t) => t.category === "direct_sale" && inPeriod(t.created_at)).length;
+    const soldBySellers = transactions.filter((t) => t.category === "collection" && t.phone_id != null && inPeriod(t.created_at)).length;
+
+    return { bought, sold, sold_by_me: soldByMe, sold_by_sellers: soldBySellers };
+  }, [phones, transactions]);
+
+  const getProfitLoss = useCallback((period: string): { income: number; expenses: number; profit: number } => {
+    const now = new Date();
+    const today = now.toISOString().split("T")[0];
+
+    function inPeriod(dateStr: string): boolean {
+      if (period === "all") return true;
+      const d = new Date(dateStr);
+      if (period === "today") return dateStr.startsWith(today);
+      if (period === "week") return now.getTime() - d.getTime() < 7 * 86400000;
+      if (period === "month") return now.getTime() - d.getTime() < 30 * 86400000;
+      return true;
+    }
+
+    const periodTx = transactions.filter((t) => inPeriod(t.created_at));
+    const income = periodTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    const expenses = periodTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+
+    return { income, expenses, profit: income - expenses };
+  }, [transactions]);
+
   // ── Mutations ──
 
   const addPhone = useCallback(async (data: Omit<Phone, "id" | "status" | "seller_id" | "created_at" | "distributed_at" | "sold_at">) => {
+    const phoneId = tempId();
     const localPhone: Phone = {
-      ...data, id: tempId(), status: "in_stock", seller_id: null,
+      ...data, id: phoneId, status: "in_stock", seller_id: null,
       created_at: new Date().toISOString(), distributed_at: null, sold_at: null,
     };
     setPhones((prev) => [localPhone, ...prev]);
+
+    // Auto-create purchase expense so capital tracks money spent
+    const purchaseTx: Transaction = {
+      id: tempId(), type: "expense", amount: data.cost_price,
+      description: `Purchased: ${data.brand} ${data.model}`,
+      memo: null, phone_id: phoneId, seller_id: null,
+      category: "purchase", payment_method: "cash",
+      created_at: new Date().toISOString(),
+    };
+    setTransactions((prev) => [purchaseTx, ...prev]);
+
     // Server — response has real ID, sync will fix it
     serverPost("/api/phones", data);
     // Quick re-sync to get real ID
+    debouncedSync();
+  }, []);
+
+  const updatePhone = useCallback(async (id: number, data: { brand: string; model: string; imei: string | null; storage: string | null; color: string | null; condition: string; cost_price: number; asking_price: number; memo: string | null }) => {
+    setPhones((prev) => prev.map((p) => p.id === id ? { ...p, ...data, condition: data.condition as Phone["condition"] } : p));
+    serverPatch(`/api/phones/${id}`, { action: "update", ...data });
     debouncedSync();
   }, []);
 
@@ -358,6 +447,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const entry: BankEntry = {
         id: tempId(), type: "deposit", amount: price,
         memo: `Direct sale: ${phone.brand} ${phone.model}`,
+        bank_name: null, currency: "birr",
         balance_after: bal + price, created_at: new Date().toISOString(),
       };
       setBankEntries((prev) => [entry, ...prev]);
@@ -367,13 +457,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     debouncedSync();
   }, [phones, getBankBalance]);
 
-  const collectPerPhone = useCallback(async (sellerId: number, phoneIds: number[], paymentMethod: string) => {
+  const collectPerPhone = useCallback(async (sellerId: number, phoneIds: number[], paymentMethod: string, priceOverride?: number) => {
     const seller = sellers.find((s) => s.id === sellerId);
     let totalAmount = 0;
+    const isSingleWithOverride = phoneIds.length === 1 && priceOverride != null;
 
     setPhones((prev) => prev.map((p) => {
       if (phoneIds.includes(p.id) && p.seller_id === sellerId && p.status === "with_seller") {
-        totalAmount += p.asking_price;
+        totalAmount += isSingleWithOverride ? priceOverride : p.asking_price;
         return { ...p, status: "sold" as const, sold_at: new Date().toISOString() };
       }
       return p;
@@ -381,8 +472,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
     const newTxs = phoneIds.map((pid) => {
       const phone = phones.find((p) => p.id === pid);
+      const amount = isSingleWithOverride ? priceOverride : (phone?.asking_price || 0);
       return {
-        id: tempId(), type: "income" as const, amount: phone?.asking_price || 0,
+        id: tempId(), type: "income" as const, amount,
         description: `Collection: ${phone?.brand} ${phone?.model}`,
         memo: null, phone_id: pid, seller_id: sellerId,
         category: "collection" as const, payment_method: paymentMethod as "cash" | "bank",
@@ -396,12 +488,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const entry: BankEntry = {
         id: tempId(), type: "deposit", amount: totalAmount,
         memo: `Collection from ${seller?.name}`,
+        bank_name: null, currency: "birr",
         balance_after: bal + totalAmount, created_at: new Date().toISOString(),
       };
       setBankEntries((prev) => [entry, ...prev]);
     }
 
-    serverPost(`/api/sellers/${sellerId}/collect`, { mode: "per_phone", phone_ids: phoneIds, payment_method: paymentMethod });
+    serverPost(`/api/sellers/${sellerId}/collect`, { mode: "per_phone", phone_ids: phoneIds, payment_method: paymentMethod, price_override: priceOverride });
     debouncedSync();
   }, [phones, sellers, getBankBalance]);
 
@@ -421,6 +514,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const entry: BankEntry = {
         id: tempId(), type: "deposit", amount,
         memo: `Lump sum from ${seller?.name}`,
+        bank_name: null, currency: "birr",
         balance_after: bal + amount, created_at: new Date().toISOString(),
       };
       setBankEntries((prev) => [entry, ...prev]);
@@ -437,35 +531,59 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     debouncedSync();
   }, []);
 
+  const updateSeller = useCallback(async (id: number, data: { name: string; phone_number: string | null; location: string | null; memo: string | null }) => {
+    setSellers((prev) => prev.map((s) => s.id === id ? { ...s, ...data } : s));
+    serverPatch(`/api/sellers/${id}`, data);
+    debouncedSync();
+  }, []);
+
   const deleteSeller = useCallback(async (id: number) => {
     setSellers((prev) => prev.filter((s) => s.id !== id));
     serverDelete(`/api/sellers/${id}`);
   }, []);
 
-  const addExpense = useCallback(async (data: { amount: number; description: string; memo: string | null; category: string }) => {
+  const addExpense = useCallback(async (data: { amount: number; description: string; memo: string | null; category: string; payment_method?: string }) => {
+    const pm = (data.payment_method || "cash") as "cash" | "bank";
     const tx: Transaction = {
       id: tempId(), type: "expense", amount: data.amount,
       description: data.description, memo: data.memo,
       phone_id: null, seller_id: null,
       category: data.category as Transaction["category"],
-      payment_method: null, created_at: new Date().toISOString(),
+      payment_method: pm, created_at: new Date().toISOString(),
     };
     setTransactions((prev) => [tx, ...prev]);
-    serverPost("/api/transactions", { ...data, type: "expense" });
+
+    // If paid from bank, create a withdrawal entry
+    if (pm === "bank") {
+      const bal = getBankBalance();
+      const entry: BankEntry = {
+        id: tempId(), type: "withdrawal", amount: data.amount,
+        memo: data.description,
+        bank_name: null, currency: "birr",
+        balance_after: bal - data.amount, created_at: new Date().toISOString(),
+      };
+      setBankEntries((prev) => [entry, ...prev]);
+    }
+
+    serverPost("/api/transactions", { ...data, type: "expense", payment_method: pm });
     debouncedSync();
-  }, []);
+  }, [getBankBalance]);
 
   const deleteTransaction = useCallback(async (id: number) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
     serverDelete(`/api/transactions/${id}`);
   }, []);
 
-  const addBankEntry = useCallback(async (data: { type: string; amount: number; memo: string | null }) => {
-    const bal = getBankBalance();
+  const addBankEntry = useCallback(async (data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }) => {
+    const currency = (data.currency || "birr") as "birr" | "usd" | "usdt";
+    const bal = getBankBalance(currency);
     const newBal = data.type === "deposit" ? bal + data.amount : bal - data.amount;
     const entry: BankEntry = {
       id: tempId(), type: data.type as "deposit" | "withdrawal",
-      amount: data.amount, memo: data.memo, balance_after: newBal,
+      amount: data.amount, memo: data.memo,
+      bank_name: data.bank_name ?? null,
+      currency,
+      balance_after: newBal,
       created_at: new Date().toISOString(),
     };
     setBankEntries((prev) => [entry, ...prev]);
@@ -473,15 +591,51 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     debouncedSync();
   }, [getBankBalance]);
 
+  // ── Loan Mutations ──
+
+  const addLoan = useCallback(async (data: { person_name: string; phone_number: string | null; original_amount: number; memo: string | null }) => {
+    const local: Loan = {
+      id: tempId(), ...data, remaining_amount: data.original_amount,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    setLoans((prev) => [local, ...prev]);
+    serverPost("/api/loans", data);
+    debouncedSync();
+  }, []);
+
+  const updateLoan = useCallback(async (id: number, data: { person_name: string; phone_number: string | null; memo: string | null }) => {
+    setLoans((prev) => prev.map((l) => l.id === id ? { ...l, ...data, updated_at: new Date().toISOString() } : l));
+    serverPatch(`/api/loans/${id}`, data);
+    debouncedSync();
+  }, []);
+
+  const deleteLoan = useCallback(async (id: number) => {
+    setLoans((prev) => prev.filter((l) => l.id !== id));
+    serverDelete(`/api/loans/${id}`);
+  }, []);
+
+  const addLoanPayment = useCallback(async (loanId: number, amount: number, memo: string | null) => {
+    setLoans((prev) => prev.map((l) => l.id === loanId ? { ...l, remaining_amount: l.remaining_amount - amount, updated_at: new Date().toISOString() } : l));
+    serverPatch(`/api/loans/${loanId}`, { action: "payment", amount, memo });
+    debouncedSync();
+  }, []);
+
+  const adjustLoanAmount = useCallback(async (loanId: number, newRemaining: number) => {
+    setLoans((prev) => prev.map((l) => l.id === loanId ? { ...l, remaining_amount: newRemaining, updated_at: new Date().toISOString() } : l));
+    serverPatch(`/api/loans/${loanId}`, { action: "adjust", remaining_amount: newRemaining });
+    debouncedSync();
+  }, []);
+
   return (
     <DataContext.Provider value={{
-      phones, sellers, transactions, bankEntries, loading,
-      getPhone, getSeller, getSellerStats, getDashboardStats, getBankBalance, getTopSellers, getTimelineEvents,
-      addPhone, deletePhone, distributePhone, returnPhone, quickSellPhone,
+      phones, sellers, transactions, bankEntries, loans, loading,
+      getPhone, getSeller, getSellerStats, getDashboardStats, getBankBalance, getAllBankBalances, getTopSellers, getTimelineEvents, getPhoneActivity, getProfitLoss,
+      addPhone, updatePhone, deletePhone, distributePhone, returnPhone, quickSellPhone,
       collectPerPhone, collectLumpSum,
-      addSeller, deleteSeller,
+      addSeller, updateSeller, deleteSeller,
       addExpense, deleteTransaction,
       addBankEntry,
+      addLoan, updateLoan, deleteLoan, addLoanPayment, adjustLoanAmount,
       refresh,
     }}>
       {children}
