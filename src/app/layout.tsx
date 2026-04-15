@@ -32,7 +32,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </PinGate>
         <script
           dangerouslySetInnerHTML={{
-            __html: `if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); }`,
+            __html: `if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                setInterval(function() { reg.update(); }, 60000);
+                reg.update();
+              });
+            }`,
           }}
         />
       </body>

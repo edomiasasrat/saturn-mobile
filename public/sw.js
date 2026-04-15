@@ -1,10 +1,7 @@
-const CACHE_NAME = "saturn-v1";
-const STATIC_ASSETS = ["/", "/inventory", "/transactions", "/debts", "/bank"];
+const CACHE_VERSION = Date.now();
+const CACHE_NAME = `saturn-${CACHE_VERSION}`;
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
-  );
+self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
@@ -19,19 +16,21 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  // API calls: network only, no caching
   if (event.request.url.includes("/api/")) {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
-    );
+    event.respondWith(fetch(event.request));
     return;
   }
+
+  // Navigation & pages: network first, fall back to cache for offline
   event.respondWith(
-    caches.match(event.request).then((cached) =>
-      cached || fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         return response;
       })
-    )
+      .catch(() => caches.match(event.request))
   );
 });
