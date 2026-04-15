@@ -298,7 +298,7 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
         </div>
       )}
 
-      {/* Edit button — always available */}
+      {/* Edit button — available for non-sold items */}
       {phone.status !== "sold" && (
         <div style={{ marginBottom: 8 }}>
           <button onClick={() => pushView(
@@ -309,6 +309,22 @@ export default function PhoneDetail({ phoneId, pushView, onAction }: PhoneDetail
             fontWeight: 700, fontSize: 15, background: "transparent", color: "var(--accent)", cursor: "pointer",
           }}>
             Edit Details
+          </button>
+        </div>
+      )}
+
+      {/* Delete sold items */}
+      {phone.status === "sold" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <button onClick={async () => {
+            if (!confirm(`Delete sold item ${phone.brand} ${phone.model}?`)) return;
+            await data.deletePhone(phone.id);
+            onAction();
+          }} style={{
+            padding: 10, borderRadius: 10, border: "1px solid var(--surface-border)",
+            fontWeight: 600, fontSize: 13, background: "transparent", color: "var(--error)", cursor: "pointer",
+          }}>
+            Delete
           </button>
         </div>
       )}

@@ -55,6 +55,7 @@ export interface Loan {
   phone_number: string | null;
   original_amount: number;
   remaining_amount: number;
+  loan_type: "given" | "taken";
   memo: string | null;
   created_at: string;
   updated_at: string;

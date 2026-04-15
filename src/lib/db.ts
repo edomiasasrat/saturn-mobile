@@ -70,6 +70,7 @@ async function initDb() {
         phone_number TEXT,
         original_amount INTEGER NOT NULL,
         remaining_amount INTEGER NOT NULL,
+        loan_type TEXT NOT NULL DEFAULT 'given' CHECK(loan_type IN ('given', 'taken')),
         memo TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -103,6 +104,7 @@ async function initDb() {
   const alterStatements = [
     "ALTER TABLE saturn_bank_entries ADD COLUMN bank_name TEXT",
     "ALTER TABLE saturn_bank_entries ADD COLUMN currency TEXT NOT NULL DEFAULT 'birr'",
+    "ALTER TABLE saturn_loans ADD COLUMN loan_type TEXT NOT NULL DEFAULT 'given'",
   ];
   for (const sql of alterStatements) {
     try { await client.execute(sql); } catch { /* column already exists */ }
@@ -551,11 +553,12 @@ export async function getLoan(id: number): Promise<Loan | null> {
   return result.rows.length ? rowTo<Loan>(result.rows[0]) : null;
 }
 
-export async function addLoan(data: { person_name: string; phone_number: string | null; original_amount: number; memo: string | null }): Promise<Loan> {
+export async function addLoan(data: { person_name: string; phone_number: string | null; original_amount: number; loan_type?: string; memo: string | null }): Promise<Loan> {
   await ensureInit();
+  const loanType = data.loan_type || "given";
   const result = await client.execute({
-    sql: "INSERT INTO saturn_loans (person_name, phone_number, original_amount, remaining_amount, memo) VALUES (?, ?, ?, ?, ?) RETURNING *",
-    args: [data.person_name, data.phone_number, data.original_amount, data.original_amount, data.memo],
+    sql: "INSERT INTO saturn_loans (person_name, phone_number, original_amount, remaining_amount, loan_type, memo) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+    args: [data.person_name, data.phone_number, data.original_amount, data.original_amount, loanType, data.memo],
   });
   return rowTo<Loan>(result.rows[0]);
 }

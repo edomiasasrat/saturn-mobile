@@ -12,6 +12,7 @@ export async function POST(request: Request) {
     person_name: body.person_name,
     phone_number: body.phone_number || null,
     original_amount: body.original_amount,
+    loan_type: body.loan_type || "given",
     memo: body.memo || null,
   });
   return NextResponse.json(loan);

@@ -34,6 +34,7 @@ interface DataContextType {
   getTimelineEvents: () => TimelineEvent[];
   getPhoneActivity: (period: string) => PhoneActivity;
   getProfitLoss: (period: string) => { income: number; expenses: number; profit: number };
+  getNetWorth: () => number;
 
   // Mutations (instant local + async server)
   addPhone: (data: Omit<Phone, "id" | "status" | "seller_id" | "created_at" | "distributed_at" | "sold_at">) => Promise<void>;
@@ -52,7 +53,7 @@ interface DataContextType {
   addBankEntry: (data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }) => Promise<void>;
 
   // Loans
-  addLoan: (data: { person_name: string; phone_number: string | null; original_amount: number; memo: string | null }) => Promise<void>;
+  addLoan: (data: { person_name: string; phone_number: string | null; original_amount: number; loan_type: "given" | "taken"; memo: string | null }) => Promise<void>;
   updateLoan: (id: number, data: { person_name: string; phone_number: string | null; memo: string | null }) => Promise<void>;
   deleteLoan: (id: number) => Promise<void>;
   addLoanPayment: (loanId: number, amount: number, memo: string | null) => Promise<void>;
@@ -130,6 +131,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const nextId = useRef(Date.now()); // local temp IDs until server assigns real ones
   const syncTimer = useRef<NodeJS.Timeout | null>(null);
+  const deletedPhoneIds = useRef<Set<number>>(new Set());
+  const deletedSellerIds = useRef<Set<number>>(new Set());
+  const deletedTransactionIds = useRef<Set<number>>(new Set());
+  const deletedLoanIds = useRef<Set<number>>(new Set());
 
   // Debounced sync — waits 800ms after last mutation to avoid overlapping syncs
   function debouncedSync() {
@@ -182,12 +187,28 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         bRes.json(),
         lRes.json(),
       ]);
-      setPhones(Array.isArray(p) ? p : []);
-      setSellers(Array.isArray(s) ? s : []);
-      setTransactions(Array.isArray(t) ? t : []);
+      // Filter out items that were deleted locally but may still be in server response
+      const phonesArr = Array.isArray(p) ? p : [];
+      const sellersArr = Array.isArray(s) ? s : [];
+      const txArr = Array.isArray(t) ? t : [];
       const entries = b.entries || b;
-      setBankEntries(Array.isArray(entries) ? entries : []);
-      setLoans(Array.isArray(l) ? l : []);
+      const entriesArr = Array.isArray(entries) ? entries : [];
+      const loansArr = Array.isArray(l) ? l : [];
+
+      setPhones(phonesArr.filter((ph: Phone) => !deletedPhoneIds.current.has(ph.id)));
+      setSellers(sellersArr.filter((sl: Seller) => !deletedSellerIds.current.has(sl.id)));
+      setTransactions(txArr.filter((tx: Transaction) => !deletedTransactionIds.current.has(tx.id)));
+      setBankEntries(entriesArr);
+      setLoans(loansArr.filter((ln: Loan) => !deletedLoanIds.current.has(ln.id)));
+
+      // Clear deleted IDs after successful sync (server has processed deletes)
+      // Use a short delay to ensure the server DELETE has completed
+      setTimeout(() => {
+        deletedPhoneIds.current.clear();
+        deletedSellerIds.current.clear();
+        deletedTransactionIds.current.clear();
+        deletedLoanIds.current.clear();
+      }, 2000);
     } catch {
       // Offline — keep localStorage data
     }
@@ -372,6 +393,19 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     return { income, expenses, profit: income - expenses };
   }, [transactions]);
 
+  const getNetWorth = useCallback((): number => {
+    // Stock value at cost_price
+    const stockValue = phones.filter((p) => p.status === "in_stock").reduce((s, p) => s + p.cost_price, 0);
+    // All bank balances (ETB + USD + USDT converted — treated as raw numbers)
+    const balances = getAllBankBalances();
+    const bankTotal = balances.birr + balances.usd + balances.usdt;
+    // Loans given (remaining = money owed to us)
+    const loansGiven = loans.filter((l) => (l.loan_type || "given") === "given").reduce((s, l) => s + l.remaining_amount, 0);
+    // Loans taken (remaining = money we owe)
+    const loansTaken = loans.filter((l) => l.loan_type === "taken").reduce((s, l) => s + l.remaining_amount, 0);
+    return stockValue + bankTotal + loansGiven - loansTaken;
+  }, [phones, loans, getAllBankBalances]);
+
   // ── Mutations ──
 
   const addPhone = useCallback(async (data: Omit<Phone, "id" | "status" | "seller_id" | "created_at" | "distributed_at" | "sold_at">) => {
@@ -405,8 +439,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deletePhone = useCallback(async (id: number) => {
+    deletedPhoneIds.current.add(id);
     setPhones((prev) => prev.filter((p) => p.id !== id));
-    serverDelete(`/api/phones/${id}`);
+    await serverDelete(`/api/phones/${id}`);
+    debouncedSync();
   }, []);
 
   const distributePhone = useCallback(async (phoneId: number, sellerId: number) => {
@@ -538,8 +574,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteSeller = useCallback(async (id: number) => {
+    deletedSellerIds.current.add(id);
     setSellers((prev) => prev.filter((s) => s.id !== id));
-    serverDelete(`/api/sellers/${id}`);
+    await serverDelete(`/api/sellers/${id}`);
+    debouncedSync();
   }, []);
 
   const addExpense = useCallback(async (data: { amount: number; description: string; memo: string | null; category: string; payment_method?: string }) => {
@@ -570,8 +608,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, [getBankBalance]);
 
   const deleteTransaction = useCallback(async (id: number) => {
+    deletedTransactionIds.current.add(id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
-    serverDelete(`/api/transactions/${id}`);
+    await serverDelete(`/api/transactions/${id}`);
+    debouncedSync();
   }, []);
 
   const addBankEntry = useCallback(async (data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }) => {
@@ -593,7 +633,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   // ── Loan Mutations ──
 
-  const addLoan = useCallback(async (data: { person_name: string; phone_number: string | null; original_amount: number; memo: string | null }) => {
+  const addLoan = useCallback(async (data: { person_name: string; phone_number: string | null; original_amount: number; loan_type: "given" | "taken"; memo: string | null }) => {
     const local: Loan = {
       id: tempId(), ...data, remaining_amount: data.original_amount,
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -610,8 +650,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const deleteLoan = useCallback(async (id: number) => {
+    deletedLoanIds.current.add(id);
     setLoans((prev) => prev.filter((l) => l.id !== id));
-    serverDelete(`/api/loans/${id}`);
+    await serverDelete(`/api/loans/${id}`);
+    debouncedSync();
   }, []);
 
   const addLoanPayment = useCallback(async (loanId: number, amount: number, memo: string | null) => {
@@ -629,7 +671,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   return (
     <DataContext.Provider value={{
       phones, sellers, transactions, bankEntries, loans, loading,
-      getPhone, getSeller, getSellerStats, getDashboardStats, getBankBalance, getAllBankBalances, getTopSellers, getTimelineEvents, getPhoneActivity, getProfitLoss,
+      getPhone, getSeller, getSellerStats, getDashboardStats, getBankBalance, getAllBankBalances, getTopSellers, getTimelineEvents, getPhoneActivity, getProfitLoss, getNetWorth,
       addPhone, updatePhone, deletePhone, distributePhone, returnPhone, quickSellPhone,
       collectPerPhone, collectLumpSum,
       addSeller, updateSeller, deleteSeller,

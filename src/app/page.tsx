@@ -33,7 +33,7 @@ const detailRow = (label: string, value: string | null | undefined, color?: stri
 type ModalType = "phone" | "transaction" | "bank" | "seller" | null;
 
 export default function Dashboard() {
-  const { getDashboardStats, getTopSellers, getPhoneActivity, getProfitLoss, phones, transactions, bankEntries, loading, refresh, addExpense } = useData();
+  const { getDashboardStats, getTopSellers, getPhoneActivity, getProfitLoss, getNetWorth, phones, transactions, bankEntries, loading, refresh, addExpense } = useData();
 
   const [period, setPeriod] = useState("today");
 
@@ -195,6 +195,7 @@ export default function Dashboard() {
             Saturn Mobile
           </h1>
         </div>
+        {/* Net Worth */}
         <div style={{
           marginTop: 12,
           background: "var(--bg)",
@@ -206,10 +207,10 @@ export default function Dashboard() {
           alignItems: "center",
         }}>
           <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            Total Capital
+            Net Worth
           </span>
-          <span style={{ fontSize: 22, fontWeight: 700, color: "var(--white)" }}>
-            {loading ? "\u2014" : formatBirr(stats.total_capital)}
+          <span style={{ fontSize: 22, fontWeight: 700, color: loading ? "var(--muted)" : getNetWorth() >= 0 ? "var(--green)" : "var(--error)" }}>
+            {loading ? "\u2014" : formatBirr(getNetWorth())}
           </span>
         </div>
       </div>
