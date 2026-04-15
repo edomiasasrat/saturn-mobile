@@ -390,11 +390,25 @@ export async function getBankEntries(): Promise<BankEntry[]> {
 
 export async function getBankBalance(currency: string = "birr"): Promise<number> {
   await ensureInit();
+  // Sum latest balance_after per bank_name for this currency
+  // This correctly handles multiple banks with the same currency
   const result = await client.execute({
-    sql: "SELECT balance_after FROM saturn_bank_entries WHERE currency = ? ORDER BY created_at DESC LIMIT 1",
+    sql: `SELECT COALESCE(bank_name, '__cash__') as bname, balance_after
+          FROM saturn_bank_entries
+          WHERE currency = ?
+          AND created_at = (
+            SELECT MAX(e2.created_at) FROM saturn_bank_entries e2
+            WHERE e2.currency = saturn_bank_entries.currency
+            AND COALESCE(e2.bank_name, '__cash__') = COALESCE(saturn_bank_entries.bank_name, '__cash__')
+          )
+          GROUP BY bname`,
     args: [currency],
   });
-  return result.rows.length ? Number((result.rows[0] as unknown as { balance_after: number }).balance_after) : 0;
+  let total = 0;
+  for (const row of result.rows) {
+    total += Number((row as unknown as { balance_after: number }).balance_after);
+  }
+  return total;
 }
 
 export async function getAllBankBalances(): Promise<{ birr: number; usd: number; usdt: number }> {
@@ -448,22 +462,14 @@ export async function getDashboardStats(period?: string): Promise<DashboardStats
   const expensesRes = await client.execute({
     sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense'${dateFilter}`, args: [],
   });
-  const expenses = Number((expensesRes.rows[0] as unknown as { total: number }).total);
+  const allExpenses = Number((expensesRes.rows[0] as unknown as { total: number }).total);
 
-  const bankBalance = await getBankBalance();
-
-  // Cash on hand: only count cash income (exclude bank-paid to avoid double-counting with bank balance)
-  const cashIncomeRes = await client.execute({
-    sql: "SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'income' AND (payment_method != 'bank' OR payment_method IS NULL)", args: [],
+  const operatingExpensesRes = await client.execute({
+    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense' AND category != 'purchase'${dateFilter}`, args: [],
   });
-  const cashIncome = Number((cashIncomeRes.rows[0] as unknown as { total: number }).total);
-  const allExpensesRes = await client.execute({
-    sql: "SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense'", args: [],
-  });
-  const allExpenses = Number((allExpensesRes.rows[0] as unknown as { total: number }).total);
+  const operatingExpenses = Number((operatingExpensesRes.rows[0] as unknown as { total: number }).total);
 
-  const cashOnHand = cashIncome - allExpenses;
-  const totalCapital = Number(stock.val) + Number(withSellers.val) + bankBalance + cashOnHand;
+  const birrBalance = await getBankBalance("birr");
 
   return {
     phones_in_stock: Number(stock.cnt),
@@ -471,10 +477,10 @@ export async function getDashboardStats(period?: string): Promise<DashboardStats
     money_out_there: Number(withSellers.val),
     stock_value: Number(stock.val),
     total_collections: collections,
-    total_expenses: expenses,
-    net_profit: collections - expenses,
-    bank_balance: bankBalance,
-    total_capital: totalCapital,
+    total_expenses: allExpenses,
+    total_operating_expenses: operatingExpenses,
+    net_profit: collections - operatingExpenses,
+    bank_balance_birr: birrBalance,
   };
 }
 

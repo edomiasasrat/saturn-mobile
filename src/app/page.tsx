@@ -196,23 +196,41 @@ export default function Dashboard() {
           </h1>
         </div>
         {/* Net Worth */}
-        <div style={{
-          marginTop: 12,
-          background: "var(--bg)",
-          border: "1px solid var(--surface-border)",
-          borderRadius: "var(--radius)",
-          padding: "12px 16px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}>
-          <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            Net Worth
-          </span>
-          <span style={{ fontSize: 22, fontWeight: 700, color: loading ? "var(--muted)" : getNetWorth() >= 0 ? "var(--green)" : "var(--error)" }}>
-            {loading ? "\u2014" : formatBirr(getNetWorth())}
-          </span>
-        </div>
+        {(() => {
+          const nw = getNetWorth();
+          return (
+            <div style={{
+              marginTop: 12,
+              background: "var(--bg)",
+              border: "1px solid var(--surface-border)",
+              borderRadius: "var(--radius)",
+              padding: "12px 16px",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  Net Worth
+                </span>
+                <span style={{ fontSize: 22, fontWeight: 700, color: loading ? "var(--muted)" : nw.total_etb >= 0 ? "var(--green)" : "var(--error)" }}>
+                  {loading ? "\u2014" : formatBirr(nw.total_etb)}
+                </span>
+              </div>
+              {!loading && (nw.usd > 0 || nw.usdt > 0) && (
+                <div style={{ display: "flex", gap: 10, marginTop: 6, justifyContent: "flex-end" }}>
+                  {nw.usd > 0 && (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>
+                      + USD {nw.usd.toLocaleString()}
+                    </span>
+                  )}
+                  {nw.usdt > 0 && (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>
+                      + USDT {nw.usdt.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{ padding: "12px 16px" }}>
@@ -258,7 +276,7 @@ export default function Dashboard() {
               <StatCard label="Expenses" value={formatBirr(stats.total_expenses)} color="var(--error)" />
             </div>
             <div onClick={() => openBankModal()} style={{ cursor: "pointer" }}>
-              <StatCard label="Bank" value={formatBirr(stats.bank_balance)} />
+              <StatCard label="Bank (ETB)" value={formatBirr(stats.bank_balance_birr)} />
             </div>
             <div onClick={() => openTransactionModal()} style={{ cursor: "pointer" }}>
               <StatCard label="Profit" value={formatBirr(stats.net_profit)} color={stats.net_profit >= 0 ? "var(--green)" : "var(--amber)"} />

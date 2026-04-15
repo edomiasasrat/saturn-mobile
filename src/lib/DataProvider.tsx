@@ -34,7 +34,7 @@ interface DataContextType {
   getTimelineEvents: () => TimelineEvent[];
   getPhoneActivity: (period: string) => PhoneActivity;
   getProfitLoss: (period: string) => { income: number; expenses: number; profit: number };
-  getNetWorth: () => number;
+  getNetWorth: () => { total_etb: number; usd: number; usdt: number };
 
   // Mutations (instant local + async server)
   addPhone: (data: Omit<Phone, "id" | "status" | "seller_id" | "created_at" | "distributed_at" | "sold_at">) => Promise<void>;
@@ -241,11 +241,23 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [sellers, phones, transactions]);
 
+  // Get total balance for a currency by summing latest balance_after per bank_name
   const getBankBalance = useCallback((currency: string = "birr"): number => {
     const filtered = bankEntries.filter((e) => (e.currency || "birr") === currency);
     if (filtered.length === 0) return 0;
-    const sorted = [...filtered].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    return sorted[0].balance_after;
+    // Group by bank_name, get latest entry per bank
+    const byBank: Record<string, BankEntry[]> = {};
+    for (const e of filtered) {
+      const key = e.bank_name || "__cash__";
+      if (!byBank[key]) byBank[key] = [];
+      byBank[key].push(e);
+    }
+    let total = 0;
+    for (const entries of Object.values(byBank)) {
+      const sorted = [...entries].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      total += sorted[0].balance_after;
+    }
+    return total;
   }, [bankEntries]);
 
   const getAllBankBalances = useCallback((): { birr: number; usd: number; usdt: number } => {
@@ -273,12 +285,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const withSellers = phones.filter((p) => p.status === "with_seller");
     const periodTx = transactions.filter((t) => inPeriod(t.created_at));
     const collections = periodTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
-    const expenses = periodTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
-    const balance = getBankBalance();
-    // Cash on hand: only count cash income (exclude bank-paid income to avoid double-counting with bank balance)
-    const cashIncome = transactions.filter((t) => t.type === "income" && t.payment_method !== "bank").reduce((s, t) => s + t.amount, 0);
-    const cashExpenses = transactions.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
-    const cashOnHand = cashIncome - cashExpenses;
+    const allExpenses = periodTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    // Operating expenses exclude phone purchases (capital conversion, not a loss)
+    const operatingExpenses = periodTx.filter((t) => t.type === "expense" && t.category !== "purchase").reduce((s, t) => s + t.amount, 0);
+    const birrBalance = getBankBalance("birr");
 
     return {
       phones_in_stock: inStock.length,
@@ -286,10 +296,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       money_out_there: withSellers.reduce((s, p) => s + p.asking_price, 0),
       stock_value: inStock.reduce((s, p) => s + p.cost_price, 0),
       total_collections: collections,
-      total_expenses: expenses,
-      net_profit: collections - expenses,
-      bank_balance: balance,
-      total_capital: inStock.reduce((s, p) => s + p.cost_price, 0) + withSellers.reduce((s, p) => s + p.asking_price, 0) + balance + cashOnHand,
+      total_expenses: allExpenses,
+      total_operating_expenses: operatingExpenses,
+      net_profit: collections - operatingExpenses,
+      bank_balance_birr: birrBalance,
     };
   }, [phones, transactions, getBankBalance]);
 
@@ -388,22 +398,30 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
     const periodTx = transactions.filter((t) => inPeriod(t.created_at));
     const income = periodTx.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
-    const expenses = periodTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    // Operating expenses only — phone purchases are capital conversion, not losses
+    const expenses = periodTx.filter((t) => t.type === "expense" && t.category !== "purchase").reduce((s, t) => s + t.amount, 0);
 
     return { income, expenses, profit: income - expenses };
   }, [transactions]);
 
-  const getNetWorth = useCallback((): number => {
-    // Stock value at cost_price
-    const stockValue = phones.filter((p) => p.status === "in_stock").reduce((s, p) => s + p.cost_price, 0);
-    // All bank balances (ETB + USD + USDT converted — treated as raw numbers)
+  // Net worth broken down by component — ETB only for the total, foreign currencies shown separately
+  const getNetWorth = useCallback((): { total_etb: number; usd: number; usdt: number } => {
+    // Stock value at cost_price (in_stock + with_seller = all unsold inventory)
+    const inventoryValue = phones
+      .filter((p) => p.status === "in_stock" || p.status === "with_seller")
+      .reduce((s, p) => s + p.cost_price, 0);
+    // Bank balances per currency
     const balances = getAllBankBalances();
-    const bankTotal = balances.birr + balances.usd + balances.usdt;
-    // Loans given (remaining = money owed to us)
+    // Loans given (remaining = money owed to us) — assumed ETB
     const loansGiven = loans.filter((l) => (l.loan_type || "given") === "given").reduce((s, l) => s + l.remaining_amount, 0);
-    // Loans taken (remaining = money we owe)
+    // Loans taken (remaining = money we owe) — assumed ETB
     const loansTaken = loans.filter((l) => l.loan_type === "taken").reduce((s, l) => s + l.remaining_amount, 0);
-    return stockValue + bankTotal + loansGiven - loansTaken;
+
+    return {
+      total_etb: inventoryValue + balances.birr + loansGiven - loansTaken,
+      usd: balances.usd,
+      usdt: balances.usdt,
+    };
   }, [phones, loans, getAllBankBalances]);
 
   // ── Mutations ──

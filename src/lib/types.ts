@@ -90,7 +90,7 @@ export interface DashboardStats {
   stock_value: number;
   total_collections: number;
   total_expenses: number;
+  total_operating_expenses: number;
   net_profit: number;
-  bank_balance: number;
-  total_capital: number;
+  bank_balance_birr: number;
 }
