@@ -201,14 +201,16 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setBankEntries(entriesArr);
       setLoans(loansArr.filter((ln: Loan) => !deletedLoanIds.current.has(ln.id)));
 
-      // Clear deleted IDs after successful sync (server has processed deletes)
-      // Use a short delay to ensure the server DELETE has completed
-      setTimeout(() => {
-        deletedPhoneIds.current.clear();
-        deletedSellerIds.current.clear();
-        deletedTransactionIds.current.clear();
-        deletedLoanIds.current.clear();
-      }, 2000);
+      // Clear deleted IDs only for items that are confirmed gone from server
+      const serverPhoneIds = new Set(phonesArr.map((p: Phone) => p.id));
+      const serverSellerIds = new Set(sellersArr.map((s: Seller) => s.id));
+      const serverTxIds = new Set(txArr.map((t: Transaction) => t.id));
+      const serverLoanIds = new Set(loansArr.map((l: Loan) => l.id));
+
+      for (const id of deletedPhoneIds.current) { if (!serverPhoneIds.has(id)) deletedPhoneIds.current.delete(id); }
+      for (const id of deletedSellerIds.current) { if (!serverSellerIds.has(id)) deletedSellerIds.current.delete(id); }
+      for (const id of deletedTransactionIds.current) { if (!serverTxIds.has(id)) deletedTransactionIds.current.delete(id); }
+      for (const id of deletedLoanIds.current) { if (!serverLoanIds.has(id)) deletedLoanIds.current.delete(id); }
     } catch {
       // Offline — keep localStorage data
     }

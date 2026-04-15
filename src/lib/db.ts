@@ -391,18 +391,17 @@ export async function getBankEntries(): Promise<BankEntry[]> {
 export async function getBankBalance(currency: string = "birr"): Promise<number> {
   await ensureInit();
   // Sum latest balance_after per bank_name for this currency
-  // This correctly handles multiple banks with the same currency
+  // Uses MAX(id) as tiebreaker for entries with identical timestamps
   const result = await client.execute({
     sql: `SELECT COALESCE(bank_name, '__cash__') as bname, balance_after
           FROM saturn_bank_entries
           WHERE currency = ?
-          AND created_at = (
-            SELECT MAX(e2.created_at) FROM saturn_bank_entries e2
-            WHERE e2.currency = saturn_bank_entries.currency
-            AND COALESCE(e2.bank_name, '__cash__') = COALESCE(saturn_bank_entries.bank_name, '__cash__')
-          )
-          GROUP BY bname`,
-    args: [currency],
+          AND id IN (
+            SELECT MAX(e2.id) FROM saturn_bank_entries e2
+            WHERE e2.currency = ?
+            GROUP BY COALESCE(e2.bank_name, '__cash__')
+          )`,
+    args: [currency, currency],
   });
   let total = 0;
   for (const row of result.rows) {
@@ -435,14 +434,21 @@ export async function addBankEntry(data: { type: string; amount: number; memo: s
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 
+// Returns { sql, args } for parameterized date filtering
+function periodFilter(period: string | undefined, column: string = "created_at"): { sql: string; args: (string | number)[] } {
+  if (period === "today") {
+    const today = new Date().toISOString().split("T")[0];
+    return { sql: ` AND date(${column}) = ?`, args: [today] };
+  }
+  if (period === "week") return { sql: ` AND ${column} >= datetime('now', '-7 days')`, args: [] };
+  if (period === "month") return { sql: ` AND ${column} >= datetime('now', '-30 days')`, args: [] };
+  return { sql: "", args: [] };
+}
+
 export async function getDashboardStats(period?: string): Promise<DashboardStats> {
   await ensureInit();
 
-  let dateFilter = "";
-  const today = new Date().toISOString().split("T")[0];
-  if (period === "today") dateFilter = ` AND date(created_at) = '${today}'`;
-  else if (period === "week") dateFilter = ` AND created_at >= datetime('now', '-7 days')`;
-  else if (period === "month") dateFilter = ` AND created_at >= datetime('now', '-30 days')`;
+  const pf = periodFilter(period);
 
   const stockRes = await client.execute({
     sql: "SELECT COUNT(*) as cnt, COALESCE(SUM(cost_price), 0) as val FROM saturn_phones WHERE status = 'in_stock'", args: [],
@@ -455,17 +461,17 @@ export async function getDashboardStats(period?: string): Promise<DashboardStats
   const withSellers = withSellersRes.rows[0] as unknown as { cnt: number; val: number };
 
   const collectionsRes = await client.execute({
-    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'income'${dateFilter}`, args: [],
+    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'income'${pf.sql}`, args: [...pf.args],
   });
   const collections = Number((collectionsRes.rows[0] as unknown as { total: number }).total);
 
   const expensesRes = await client.execute({
-    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense'${dateFilter}`, args: [],
+    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense'${pf.sql}`, args: [...pf.args],
   });
   const allExpenses = Number((expensesRes.rows[0] as unknown as { total: number }).total);
 
   const operatingExpensesRes = await client.execute({
-    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense' AND category != 'purchase'${dateFilter}`, args: [],
+    sql: `SELECT COALESCE(SUM(amount), 0) as total FROM saturn_transactions WHERE type = 'expense' AND category != 'purchase'${pf.sql}`, args: [...pf.args],
   });
   const operatingExpenses = Number((operatingExpensesRes.rows[0] as unknown as { total: number }).total);
 
@@ -502,43 +508,27 @@ export async function getTopSellers(limit: number = 5): Promise<SellerWithStats[
 export async function getPhoneActivity(period?: string): Promise<PhoneActivity> {
   await ensureInit();
 
-  let dateFilter = "";
-  const today = new Date().toISOString().split("T")[0];
-  if (period === "today") dateFilter = ` AND date(created_at) = '${today}'`;
-  else if (period === "week") dateFilter = ` AND created_at >= datetime('now', '-7 days')`;
-  else if (period === "month") dateFilter = ` AND created_at >= datetime('now', '-30 days')`;
+  const pf = periodFilter(period);
+  const pfSold = periodFilter(period, "sold_at");
+  const pfTx = periodFilter(period, "t.created_at");
 
-  let soldDateFilter = "";
-  if (period === "today") soldDateFilter = ` AND date(sold_at) = '${today}'`;
-  else if (period === "week") soldDateFilter = ` AND sold_at >= datetime('now', '-7 days')`;
-  else if (period === "month") soldDateFilter = ` AND sold_at >= datetime('now', '-30 days')`;
-
-  // Phones bought (added to stock) in period
   const boughtRes = await client.execute({
-    sql: `SELECT COUNT(*) as cnt FROM saturn_phones WHERE 1=1${dateFilter}`, args: [],
+    sql: `SELECT COUNT(*) as cnt FROM saturn_phones WHERE 1=1${pf.sql}`, args: [...pf.args],
   });
   const bought = Number((boughtRes.rows[0] as unknown as { cnt: number }).cnt);
 
-  // Phones sold in period
   const soldRes = await client.execute({
-    sql: `SELECT COUNT(*) as cnt FROM saturn_phones WHERE status = 'sold' AND sold_at IS NOT NULL${soldDateFilter}`, args: [],
+    sql: `SELECT COUNT(*) as cnt FROM saturn_phones WHERE status = 'sold' AND sold_at IS NOT NULL${pfSold.sql}`, args: [...pfSold.args],
   });
   const sold = Number((soldRes.rows[0] as unknown as { cnt: number }).cnt);
 
-  // Sold by me (direct_sale) in period
-  let directDateFilter = "";
-  if (period === "today") directDateFilter = ` AND date(t.created_at) = '${today}'`;
-  else if (period === "week") directDateFilter = ` AND t.created_at >= datetime('now', '-7 days')`;
-  else if (period === "month") directDateFilter = ` AND t.created_at >= datetime('now', '-30 days')`;
-
   const byMeRes = await client.execute({
-    sql: `SELECT COUNT(*) as cnt FROM saturn_transactions t WHERE t.category = 'direct_sale'${directDateFilter}`, args: [],
+    sql: `SELECT COUNT(*) as cnt FROM saturn_transactions t WHERE t.category = 'direct_sale'${pfTx.sql}`, args: [...pfTx.args],
   });
   const soldByMe = Number((byMeRes.rows[0] as unknown as { cnt: number }).cnt);
 
-  // Sold by other sellers (collection) in period
   const bySellersRes = await client.execute({
-    sql: `SELECT COUNT(*) as cnt FROM saturn_transactions t WHERE t.category = 'collection' AND t.phone_id IS NOT NULL${directDateFilter}`, args: [],
+    sql: `SELECT COUNT(*) as cnt FROM saturn_transactions t WHERE t.category = 'collection' AND t.phone_id IS NOT NULL${pfTx.sql}`, args: [...pfTx.args],
   });
   const soldBySellers = Number((bySellersRes.rows[0] as unknown as { cnt: number }).cnt);
 
@@ -590,6 +580,7 @@ export async function addLoanPayment(loanId: number, amount: number, memo: strin
   await ensureInit();
   const loan = await getLoan(loanId);
   if (!loan) throw new Error("Loan not found");
+  if (amount > loan.remaining_amount) throw new Error("Payment exceeds remaining amount");
   const newRemaining = loan.remaining_amount - amount;
   await client.execute({
     sql: "UPDATE saturn_loans SET remaining_amount = ?, updated_at = datetime('now') WHERE id = ?",
