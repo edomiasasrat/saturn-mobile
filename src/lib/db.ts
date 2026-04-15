@@ -178,6 +178,9 @@ export async function updateSeller(id: number, data: { name?: string; phone_numb
 
 export async function deleteSeller(id: number): Promise<void> {
   await ensureInit();
+  // Nullify references in phones and transactions before deleting
+  await client.execute({ sql: "UPDATE saturn_phones SET seller_id = NULL WHERE seller_id = ?", args: [id] });
+  await client.execute({ sql: "UPDATE saturn_transactions SET seller_id = NULL WHERE seller_id = ?", args: [id] });
   await client.execute({ sql: "DELETE FROM saturn_sellers WHERE id = ?", args: [id] });
 }
 
@@ -287,6 +290,8 @@ export async function updatePhone(id: number, data: {
 
 export async function deletePhone(id: number): Promise<void> {
   await ensureInit();
+  // Nullify references in transactions before deleting
+  await client.execute({ sql: "UPDATE saturn_transactions SET phone_id = NULL WHERE phone_id = ?", args: [id] });
   await client.execute({ sql: "DELETE FROM saturn_phones WHERE id = ?", args: [id] });
 }
 

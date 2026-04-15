@@ -38,9 +38,10 @@ export default function Dashboard() {
   const [period, setPeriod] = useState("today");
 
   // Modal state
+  type ModalItem = Phone | Transaction | BankEntry;
   const [modalOpen, setModalOpen] = useState(false);
   const [modalType, setModalType] = useState<ModalType>(null);
-  const [modalItems, setModalItems] = useState<any[]>([]);
+  const [modalItems, setModalItems] = useState<ModalItem[]>([]);
   const [modalIndex, setModalIndex] = useState(0);
 
   // Seller modal (separate instance for top sellers)
@@ -110,7 +111,7 @@ export default function Dashboard() {
 
   /* ─── Render modal content based on type ─── */
 
-  function renderContent(item: any, pushView: (content: ReactNode, title: string) => void): ReactNode {
+  function renderContent(item: ModalItem, pushView: (content: ReactNode, title: string) => void): ReactNode {
     if (modalType === "phone") {
       return (
         <PhoneDetail
@@ -163,8 +164,8 @@ export default function Dashboard() {
     return null;
   }
 
-  function renderSellerContent(item: any, pushView: (content: ReactNode, title: string) => void): ReactNode {
-    const seller = item as SellerWithStats;
+  function renderSellerContent(item: SellerWithStats, pushView: (content: ReactNode, title: string) => void): ReactNode {
+    const seller = item;
     return (
       <SellerDetail
         sellerId={seller.id}

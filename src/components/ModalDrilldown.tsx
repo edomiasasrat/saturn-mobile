@@ -8,16 +8,16 @@ interface ViewStackItem {
   title: string;
 }
 
-interface ModalDrilldownProps {
+interface ModalDrilldownProps<T extends { id: number | string }> {
   open: boolean;
   onClose: () => void;
-  items: Array<{ id: number | string }>;
+  items: T[];
   currentIndex: number;
   onChangeIndex: (index: number) => void;
-  renderContent: (item: any, pushView: (content: ReactNode, title: string) => void) => ReactNode;
+  renderContent: (item: T, pushView: (content: ReactNode, title: string) => void) => ReactNode;
 }
 
-export default function ModalDrilldown({ open, onClose, items, currentIndex, onChangeIndex, renderContent }: ModalDrilldownProps) {
+export default function ModalDrilldown<T extends { id: number | string }>({ open, onClose, items, currentIndex, onChangeIndex, renderContent }: ModalDrilldownProps<T>) {
   const [viewStack, setViewStack] = useState<ViewStackItem[]>([]);
 
   useEffect(() => {
