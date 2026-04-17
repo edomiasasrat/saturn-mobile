@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from "react";
-import type { Phone, Seller, Transaction, BankEntry, DashboardStats, SellerWithStats, PhoneActivity, Loan, LoanPayment } from "./types";
+import type { Phone, Seller, Transaction, BankAccount, BankLog, DashboardStats, SellerWithStats, PhoneActivity, Loan, LoanPayment } from "./types";
 
 const STORAGE_KEY = "saturn_data_v2";
 
@@ -9,7 +9,8 @@ interface DataStore {
   phones: Phone[];
   sellers: Seller[];
   transactions: Transaction[];
-  bankEntries: BankEntry[];
+  bankAccounts: BankAccount[];
+  bankLog: BankLog[];
   loans: Loan[];
   lastSync: number;
 }
@@ -19,7 +20,8 @@ interface DataContextType {
   phones: Phone[];
   sellers: Seller[];
   transactions: Transaction[];
-  bankEntries: BankEntry[];
+  bankAccounts: BankAccount[];
+  bankLog: BankLog[];
   loans: Loan[];
   loading: boolean;
 
@@ -28,13 +30,12 @@ interface DataContextType {
   getSeller: (id: number) => Seller | undefined;
   getSellerStats: (id: number) => SellerWithStats | undefined;
   getDashboardStats: (period: string) => DashboardStats;
-  getBankBalance: (currency?: string) => number;
-  getAllBankBalances: () => { birr: number; usd: number; usdt: number };
+  getTotalLiquid: () => number;
   getTopSellers: (limit?: number) => SellerWithStats[];
   getTimelineEvents: () => TimelineEvent[];
   getPhoneActivity: (period: string) => PhoneActivity;
   getProfitLoss: (period: string) => { income: number; expenses: number; profit: number };
-  getNetWorth: () => { total_etb: number; usd: number; usdt: number };
+  getNetWorth: () => number;
 
   // Mutations (instant local + async server)
   addPhone: (data: Omit<Phone, "id" | "status" | "seller_id" | "created_at" | "distributed_at" | "sold_at">) => Promise<void>;
@@ -50,7 +51,10 @@ interface DataContextType {
   updatePhone: (id: number, data: { brand: string; model: string; imei: string | null; storage: string | null; color: string | null; condition: string; cost_price: number; asking_price: number; memo: string | null }) => Promise<void>;
   addExpense: (data: { amount: number; description: string; memo: string | null; category: string; payment_method?: string }) => Promise<void>;
   deleteTransaction: (id: number) => Promise<void>;
-  addBankEntry: (data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }) => Promise<void>;
+  addBankAccount: (data: { name: string; currency: string; balance: number; exchange_rate?: number }) => Promise<void>;
+  updateBankBalance: (accountId: number, newBalance: number, memo: string | null) => Promise<void>;
+  updateBankRate: (accountId: number, exchangeRate: number) => Promise<void>;
+  deleteBankAccount: (accountId: number) => Promise<void>;
 
   // Loans
   addLoan: (data: { person_name: string; phone_number: string | null; original_amount: number; loan_type: "given" | "taken"; memo: string | null }) => Promise<void>;
@@ -126,7 +130,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [phones, setPhones] = useState<Phone[]>([]);
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [bankEntries, setBankEntries] = useState<BankEntry[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [bankLog, setBankLog] = useState<BankLog[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const nextId = useRef(Date.now()); // local temp IDs until server assigns real ones
@@ -154,7 +159,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setPhones(stored.phones);
       setSellers(stored.sellers);
       setTransactions(stored.transactions);
-      setBankEntries(stored.bankEntries);
+      setBankAccounts(stored.bankAccounts || []);
+      setBankLog(stored.bankLog || []);
       setLoans(stored.loans || []);
       setLoading(false);
     }
@@ -166,8 +172,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading) return;
-    saveToStorage({ phones, sellers, transactions, bankEntries, loans, lastSync: Date.now() });
-  }, [phones, sellers, transactions, bankEntries, loans, loading]);
+    saveToStorage({ phones, sellers, transactions, bankAccounts, bankLog, loans, lastSync: Date.now() });
+  }, [phones, sellers, transactions, bankAccounts, bankLog, loans, loading]);
 
   // ── Server sync ──
 
@@ -191,14 +197,15 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const phonesArr = Array.isArray(p) ? p : [];
       const sellersArr = Array.isArray(s) ? s : [];
       const txArr = Array.isArray(t) ? t : [];
-      const entries = b.entries || b;
-      const entriesArr = Array.isArray(entries) ? entries : [];
+      const accountsArr = Array.isArray(b.accounts) ? b.accounts : [];
+      const logArr = Array.isArray(b.log) ? b.log : [];
       const loansArr = Array.isArray(l) ? l : [];
 
       setPhones(phonesArr.filter((ph: Phone) => !deletedPhoneIds.current.has(ph.id)));
       setSellers(sellersArr.filter((sl: Seller) => !deletedSellerIds.current.has(sl.id)));
       setTransactions(txArr.filter((tx: Transaction) => !deletedTransactionIds.current.has(tx.id)));
-      setBankEntries(entriesArr);
+      setBankAccounts(accountsArr);
+      setBankLog(logArr);
       setLoans(loansArr.filter((ln: Loan) => !deletedLoanIds.current.has(ln.id)));
 
       // Clear deleted IDs only for items that are confirmed gone from server
@@ -243,32 +250,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [sellers, phones, transactions]);
 
-  // Get total balance for a currency by summing latest balance_after per bank_name
-  const getBankBalance = useCallback((currency: string = "birr"): number => {
-    const filtered = bankEntries.filter((e) => (e.currency || "birr") === currency);
-    if (filtered.length === 0) return 0;
-    // Group by bank_name, get latest entry per bank
-    const byBank: Record<string, BankEntry[]> = {};
-    for (const e of filtered) {
-      const key = e.bank_name || "__cash__";
-      if (!byBank[key]) byBank[key] = [];
-      byBank[key].push(e);
-    }
-    let total = 0;
-    for (const entries of Object.values(byBank)) {
-      const sorted = [...entries].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      total += sorted[0].balance_after;
-    }
-    return total;
-  }, [bankEntries]);
-
-  const getAllBankBalances = useCallback((): { birr: number; usd: number; usdt: number } => {
-    return {
-      birr: getBankBalance("birr"),
-      usd: getBankBalance("usd"),
-      usdt: getBankBalance("usdt"),
-    };
-  }, [getBankBalance]);
+  const getTotalLiquid = useCallback((): number => {
+    return bankAccounts.reduce((sum, a) => sum + a.balance * a.exchange_rate, 0);
+  }, [bankAccounts]);
 
   const getDashboardStats = useCallback((period: string): DashboardStats => {
     const now = new Date();
@@ -290,7 +274,6 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const allExpenses = periodTx.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
     // Operating expenses exclude phone purchases (capital conversion, not a loss)
     const operatingExpenses = periodTx.filter((t) => t.type === "expense" && t.category !== "purchase").reduce((s, t) => s + t.amount, 0);
-    const birrBalance = getBankBalance("birr");
 
     return {
       phones_in_stock: inStock.length,
@@ -301,9 +284,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       total_expenses: allExpenses,
       total_operating_expenses: operatingExpenses,
       net_profit: collections - operatingExpenses,
-      bank_balance_birr: birrBalance,
     };
-  }, [phones, transactions, getBankBalance]);
+  }, [phones, transactions]);
 
   const getTopSellers = useCallback((limit = 5): SellerWithStats[] => {
     return sellers
@@ -351,17 +333,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    for (const b of bankEntries) {
-      events.push({
-        id: `bank-${b.id}`, type: b.type === "deposit" ? "bank_deposit" : "bank_withdrawal",
-        title: `Bank ${b.type}`, subtitle: b.memo,
-        amount: b.amount, amountType: b.type === "deposit" ? "income" : "expense",
-        created_at: b.created_at,
-      });
-    }
-
     return events.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [phones, sellers, transactions, bankEntries]);
+  }, [phones, sellers, transactions]);
 
   const getPhoneActivity = useCallback((period: string): PhoneActivity => {
     const now = new Date();
@@ -406,25 +379,15 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     return { income, expenses, profit: income - expenses };
   }, [transactions]);
 
-  // Net worth broken down by component — ETB only for the total, foreign currencies shown separately
-  const getNetWorth = useCallback((): { total_etb: number; usd: number; usdt: number } => {
-    // Stock value at cost_price (in_stock + with_seller = all unsold inventory)
+  const getNetWorth = useCallback((): number => {
     const inventoryValue = phones
       .filter((p) => p.status === "in_stock" || p.status === "with_seller")
       .reduce((s, p) => s + p.cost_price, 0);
-    // Bank balances per currency
-    const balances = getAllBankBalances();
-    // Loans given (remaining = money owed to us) — assumed ETB
+    const liquidETB = bankAccounts.reduce((s, a) => s + a.balance * a.exchange_rate, 0);
     const loansGiven = loans.filter((l) => (l.loan_type || "given") === "given").reduce((s, l) => s + l.remaining_amount, 0);
-    // Loans taken (remaining = money we owe) — assumed ETB
     const loansTaken = loans.filter((l) => l.loan_type === "taken").reduce((s, l) => s + l.remaining_amount, 0);
-
-    return {
-      total_etb: inventoryValue + balances.birr + loansGiven - loansTaken,
-      usd: balances.usd,
-      usdt: balances.usdt,
-    };
-  }, [phones, loans, getAllBankBalances]);
+    return inventoryValue + liquidETB + loansGiven - loansTaken;
+  }, [phones, bankAccounts, loans]);
 
   // ── Mutations ──
 
@@ -498,20 +461,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
     setTransactions((prev) => [tx, ...prev]);
 
-    if (paymentMethod === "bank") {
-      const bal = getBankBalance();
-      const entry: BankEntry = {
-        id: tempId(), type: "deposit", amount: price,
-        memo: `Direct sale: ${phone.brand} ${phone.model}`,
-        bank_name: null, currency: "birr",
-        balance_after: bal + price, created_at: new Date().toISOString(),
-      };
-      setBankEntries((prev) => [entry, ...prev]);
-    }
-
     serverPatch(`/api/phones/${phoneId}`, { action: "quick_sell", price, payment_method: paymentMethod });
     debouncedSync();
-  }, [phones, getBankBalance]);
+  }, [phones]);
 
   const collectPerPhone = useCallback(async (sellerId: number, phoneIds: number[], paymentMethod: string, priceOverride?: number) => {
     const seller = sellers.find((s) => s.id === sellerId);
@@ -539,20 +491,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     });
     setTransactions((prev) => [...newTxs, ...prev]);
 
-    if (paymentMethod === "bank" && totalAmount > 0) {
-      const bal = getBankBalance();
-      const entry: BankEntry = {
-        id: tempId(), type: "deposit", amount: totalAmount,
-        memo: `Collection from ${seller?.name}`,
-        bank_name: null, currency: "birr",
-        balance_after: bal + totalAmount, created_at: new Date().toISOString(),
-      };
-      setBankEntries((prev) => [entry, ...prev]);
-    }
-
     serverPost(`/api/sellers/${sellerId}/collect`, { mode: "per_phone", phone_ids: phoneIds, payment_method: paymentMethod, price_override: priceOverride });
     debouncedSync();
-  }, [phones, sellers, getBankBalance]);
+  }, [phones, sellers]);
 
   const collectLumpSum = useCallback(async (sellerId: number, amount: number, paymentMethod: string, memo: string | null) => {
     const seller = sellers.find((s) => s.id === sellerId);
@@ -565,20 +506,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
     setTransactions((prev) => [tx, ...prev]);
 
-    if (paymentMethod === "bank") {
-      const bal = getBankBalance();
-      const entry: BankEntry = {
-        id: tempId(), type: "deposit", amount,
-        memo: `Lump sum from ${seller?.name}`,
-        bank_name: null, currency: "birr",
-        balance_after: bal + amount, created_at: new Date().toISOString(),
-      };
-      setBankEntries((prev) => [entry, ...prev]);
-    }
-
     serverPost(`/api/sellers/${sellerId}/collect`, { mode: "lump_sum", amount, payment_method: paymentMethod, memo });
     debouncedSync();
-  }, [sellers, getBankBalance]);
+  }, [sellers]);
 
   const addSeller = useCallback(async (data: { name: string; phone_number: string | null; location: string | null; memo: string | null }) => {
     const local: Seller = { id: tempId(), ...data, created_at: new Date().toISOString() };
@@ -611,21 +541,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
     setTransactions((prev) => [tx, ...prev]);
 
-    // If paid from bank, create a withdrawal entry
-    if (pm === "bank") {
-      const bal = getBankBalance();
-      const entry: BankEntry = {
-        id: tempId(), type: "withdrawal", amount: data.amount,
-        memo: data.description,
-        bank_name: null, currency: "birr",
-        balance_after: bal - data.amount, created_at: new Date().toISOString(),
-      };
-      setBankEntries((prev) => [entry, ...prev]);
-    }
-
     serverPost("/api/transactions", { ...data, type: "expense", payment_method: pm });
     debouncedSync();
-  }, [getBankBalance]);
+  }, []);
 
   const deleteTransaction = useCallback(async (id: number) => {
     deletedTransactionIds.current.add(id);
@@ -634,22 +552,57 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     debouncedSync();
   }, []);
 
-  const addBankEntry = useCallback(async (data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }) => {
-    const currency = (data.currency || "birr") as "birr" | "usd" | "usdt";
-    const bal = getBankBalance(currency);
-    const newBal = data.type === "deposit" ? bal + data.amount : bal - data.amount;
-    const entry: BankEntry = {
-      id: tempId(), type: data.type as "deposit" | "withdrawal",
-      amount: data.amount, memo: data.memo,
-      bank_name: data.bank_name ?? null,
-      currency,
-      balance_after: newBal,
+  const addBankAccount = useCallback(async (data: { name: string; currency: string; balance: number; exchange_rate?: number }) => {
+    const local: BankAccount = {
+      id: tempId(), name: data.name,
+      currency: data.currency as BankAccount["currency"],
+      balance: data.balance,
+      exchange_rate: data.exchange_rate ?? 1,
+      memo: null,
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
-    setBankEntries((prev) => [entry, ...prev]);
+    setBankAccounts((prev) => [...prev, local]);
+    const logEntry: BankLog = {
+      id: tempId(), account_id: local.id,
+      balance_before: 0, balance_after: data.balance,
+      memo: "Opening balance", created_at: new Date().toISOString(),
+    };
+    setBankLog((prev) => [logEntry, ...prev]);
     serverPost("/api/bank", data);
     debouncedSync();
-  }, [getBankBalance]);
+  }, []);
+
+  const updateBankBalance = useCallback(async (accountId: number, newBalance: number, memo: string | null) => {
+    const account = bankAccounts.find((a) => a.id === accountId);
+    const oldBalance = account?.balance ?? 0;
+    setBankAccounts((prev) => prev.map((a) =>
+      a.id === accountId ? { ...a, balance: newBalance, memo, updated_at: new Date().toISOString() } : a
+    ));
+    const logEntry: BankLog = {
+      id: tempId(), account_id: accountId,
+      balance_before: oldBalance, balance_after: newBalance,
+      memo, created_at: new Date().toISOString(),
+    };
+    setBankLog((prev) => [logEntry, ...prev]);
+    serverPatch("/api/bank", { action: "update_balance", account_id: accountId, balance: newBalance, memo });
+    debouncedSync();
+  }, [bankAccounts]);
+
+  const updateBankRate = useCallback(async (accountId: number, exchangeRate: number) => {
+    setBankAccounts((prev) => prev.map((a) =>
+      a.id === accountId ? { ...a, exchange_rate: exchangeRate, updated_at: new Date().toISOString() } : a
+    ));
+    serverPatch("/api/bank", { action: "update_rate", account_id: accountId, exchange_rate: exchangeRate });
+    debouncedSync();
+  }, []);
+
+  const deleteBankAccount = useCallback(async (accountId: number) => {
+    setBankAccounts((prev) => prev.filter((a) => a.id !== accountId));
+    setBankLog((prev) => prev.filter((l) => l.account_id !== accountId));
+    await serverDelete(`/api/bank?id=${accountId}`);
+    debouncedSync();
+  }, []);
 
   // ── Loan Mutations ──
 
@@ -690,13 +643,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   return (
     <DataContext.Provider value={{
-      phones, sellers, transactions, bankEntries, loans, loading,
-      getPhone, getSeller, getSellerStats, getDashboardStats, getBankBalance, getAllBankBalances, getTopSellers, getTimelineEvents, getPhoneActivity, getProfitLoss, getNetWorth,
+      phones, sellers, transactions, bankAccounts, bankLog, loans, loading,
+      getPhone, getSeller, getSellerStats, getDashboardStats, getTotalLiquid, getTopSellers, getTimelineEvents, getPhoneActivity, getProfitLoss, getNetWorth,
       addPhone, updatePhone, deletePhone, distributePhone, returnPhone, quickSellPhone,
       collectPerPhone, collectLumpSum,
       addSeller, updateSeller, deleteSeller,
       addExpense, deleteTransaction,
-      addBankEntry,
+      addBankAccount, updateBankBalance, updateBankRate, deleteBankAccount,
       addLoan, updateLoan, deleteLoan, addLoanPayment, adjustLoanAmount,
       refresh,
     }}>
