@@ -38,14 +38,23 @@ export interface Transaction {
   created_at: string;
 }
 
-export interface BankEntry {
+export interface BankAccount {
   id: number;
-  type: "deposit" | "withdrawal";
-  amount: number;
-  memo: string | null;
-  bank_name: string | null;
+  name: string;
   currency: "birr" | "usd" | "usdt";
+  balance: number;
+  exchange_rate: number;
+  memo: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BankLog {
+  id: number;
+  account_id: number;
+  balance_before: number;
   balance_after: number;
+  memo: string | null;
   created_at: string;
 }
 
@@ -92,5 +101,4 @@ export interface DashboardStats {
   total_expenses: number;
   total_operating_expenses: number;
   net_profit: number;
-  bank_balance_birr: number;
 }
