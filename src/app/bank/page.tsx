@@ -1,145 +1,102 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Edit3, ChevronDown, ChevronUp, Plus, History } from "lucide-react";
-import type { BankEntry } from "@/lib/types";
+import { useState } from "react";
+import { Edit3, Wallet, TrendingUp, Trash2 } from "lucide-react";
 import { formatDate } from "@/lib/format";
 import BottomSheet from "@/components/BottomSheet";
 import FAB from "@/components/FAB";
 import { useData } from "@/lib/DataProvider";
+import type { BankAccount, BankLog } from "@/lib/types";
 
 type Currency = "birr" | "usd" | "usdt";
-const currencySymbols: Record<Currency, string> = { birr: "ETB", usd: "USD", usdt: "USDT" };
-
-function formatAmount(amount: number, currency: Currency): string {
-  return `${currencySymbols[currency]} ${amount.toLocaleString()}`;
-}
-
-interface BankGroup {
-  name: string;
-  balances: { birr: number; usd: number; usdt: number };
-  entries: BankEntry[];
-}
+const currencyLabels: Record<Currency, string> = { birr: "ETB", usd: "USD", usdt: "USDT" };
 
 export default function BankPage() {
-  const { bankEntries, addBankEntry, loading } = useData();
+  const { bankAccounts, bankLog, getTotalLiquid, addBankAccount, updateBankBalance, updateBankRate, deleteBankAccount, loading } = useData();
 
   const [editOpen, setEditOpen] = useState(false);
-  const [addBankOpen, setAddBankOpen] = useState(false);
-  const [expandedBank, setExpandedBank] = useState<string | null>(null);
-
-  // Edit balance form
-  const [editBankName, setEditBankName] = useState("");
-  const [editCurrency, setEditCurrency] = useState<Currency>("birr");
-  const [editAmount, setEditAmount] = useState("");
-  const [editMemo, setEditMemo] = useState("");
+  const [rateOpen, setRateOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Add bank form
-  const [newBankName, setNewBankName] = useState("");
+  // Edit balance form
+  const [editAccount, setEditAccount] = useState<BankAccount | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editMemo, setEditMemo] = useState("");
+
+  // Edit rate form
+  const [rateAccount, setRateAccount] = useState<BankAccount | null>(null);
+  const [rateValue, setRateValue] = useState("");
+
+  // Add form
+  const [newName, setNewName] = useState("");
   const [newCurrency, setNewCurrency] = useState<Currency>("birr");
   const [newAmount, setNewAmount] = useState("");
-  const [newMemo, setNewMemo] = useState("");
+  const [newRate, setNewRate] = useState("");
 
-  // Group entries by bank_name and compute balances
-  const banks: BankGroup[] = useMemo(() => {
-    const groups: Record<string, BankEntry[]> = {};
-    for (const entry of bankEntries) {
-      const name = entry.bank_name || "Cash";
-      if (!groups[name]) groups[name] = [];
-      groups[name].push(entry);
-    }
-
-    return Object.entries(groups).map(([name, entries]) => {
-      // Sort entries newest first
-      const sorted = [...entries].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      // Get latest balance per currency
-      const balances = { birr: 0, usd: 0, usdt: 0 };
-      for (const curr of ["birr", "usd", "usdt"] as Currency[]) {
-        const latest = sorted.find((e) => (e.currency || "birr") === curr);
-        if (latest) balances[curr] = latest.balance_after;
-      }
-
-      return { name, balances, entries: sorted };
-    }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [bankEntries]);
-
-  // Total balances across all banks
-  const totals = useMemo(() => {
-    const t = { birr: 0, usd: 0, usdt: 0 };
-    for (const bank of banks) {
-      t.birr += bank.balances.birr;
-      t.usd += bank.balances.usd;
-      t.usdt += bank.balances.usdt;
-    }
-    return t;
-  }, [banks]);
-
-  const openEditBalance = (bankName: string, currency: Currency, currentBalance: number) => {
-    setEditBankName(bankName);
-    setEditCurrency(currency);
-    setEditAmount(String(currentBalance));
+  const openEditBalance = (account: BankAccount) => {
+    setEditAccount(account);
+    setEditAmount(String(account.balance));
     setEditMemo("");
     setError(null);
     setEditOpen(true);
   };
 
-  const handleEditBalance = async () => {
+  const openEditRate = (account: BankAccount) => {
+    setRateAccount(account);
+    setRateValue(String(account.exchange_rate));
+    setError(null);
+    setRateOpen(true);
+  };
+
+  const handleUpdateBalance = async () => {
+    if (!editAccount) return;
     const parsed = parseFloat(editAmount);
     if (editAmount === "" || isNaN(parsed)) { setError("Enter a valid amount."); return; }
-    if (!editMemo.trim()) { setError("Memo is required for balance edits."); return; }
-    setError(null);
+    if (parsed === editAccount.balance && !editMemo.trim()) { setEditOpen(false); return; }
     setSubmitting(true);
-
-    // Find current balance for this bank+currency
-    const bankEntryList = bankEntries.filter(
-      (e) => (e.bank_name || "Cash") === editBankName && (e.currency || "birr") === editCurrency
-    );
-    const sorted = [...bankEntryList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    const currentBalance = sorted.length > 0 ? sorted[0].balance_after : 0;
-    const diff = parsed - currentBalance;
-
-    if (diff === 0) {
-      setEditOpen(false);
-      setSubmitting(false);
-      return;
-    }
-
     try {
-      await addBankEntry({
-        type: diff > 0 ? "deposit" : "withdrawal",
-        amount: Math.abs(diff),
-        memo: editMemo.trim(),
-        bank_name: editBankName === "Cash" ? null : editBankName,
-        currency: editCurrency,
-      });
+      await updateBankBalance(editAccount.id, parsed, editMemo.trim() || null);
       setEditOpen(false);
     } catch { setError("Something went wrong."); }
     finally { setSubmitting(false); }
   };
 
-  const handleAddBank = async () => {
-    if (!newBankName.trim()) { setError("Bank name is required."); return; }
-    const parsed = parseFloat(newAmount);
-    if (newAmount === "" || isNaN(parsed)) { setError("Enter a valid amount."); return; }
-    if (!newMemo.trim()) { setError("Memo is required."); return; }
-    setError(null);
+  const handleUpdateRate = async () => {
+    if (!rateAccount) return;
+    const parsed = parseFloat(rateValue);
+    if (rateValue === "" || isNaN(parsed) || parsed <= 0) { setError("Enter a valid rate."); return; }
     setSubmitting(true);
     try {
-      await addBankEntry({
-        type: "deposit",
-        amount: parsed,
-        memo: newMemo.trim(),
-        bank_name: newBankName.trim(),
-        currency: newCurrency,
-      });
-      setAddBankOpen(false);
-      setNewBankName("");
-      setNewAmount("");
-      setNewMemo("");
+      await updateBankRate(rateAccount.id, parsed);
+      setRateOpen(false);
     } catch { setError("Something went wrong."); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleAddBank = async () => {
+    if (!newName.trim()) { setError("Bank name is required."); return; }
+    const parsed = parseFloat(newAmount);
+    if (newAmount === "" || isNaN(parsed) || parsed < 0) { setError("Enter a valid starting balance."); return; }
+    const rate = newCurrency !== "birr" ? parseFloat(newRate) : 1;
+    if (newCurrency !== "birr" && (newRate === "" || isNaN(rate) || rate <= 0)) { setError("Enter a valid exchange rate."); return; }
+    setSubmitting(true);
+    try {
+      await addBankAccount({ name: newName.trim(), currency: newCurrency, balance: parsed, exchange_rate: rate });
+      setAddOpen(false);
+      setNewName(""); setNewAmount(""); setNewRate(""); setNewCurrency("birr");
+    } catch { setError("Something went wrong."); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleDelete = async (id: number) => {
+    setSubmitting(true);
+    try {
+      await deleteBankAccount(id);
+      setDeleteConfirm(null);
+    } catch { /* ignore */ }
     finally { setSubmitting(false); }
   };
 
@@ -155,169 +112,190 @@ export default function BankPage() {
     textTransform: "uppercase", letterSpacing: "0.05em",
   };
 
+  const totalLiquid = loading ? 0 : getTotalLiquid();
+
+  // Build a map of account names for the log
+  const accountMap = new Map<number, BankAccount>();
+  for (const a of bankAccounts) accountMap.set(a.id, a);
+
   return (
     <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: 96 }}>
-      {/* Sticky header */}
+      {/* Header */}
       <div style={{
         position: "sticky", top: 0, zIndex: 10,
         background: "var(--surface)",
         borderBottom: "1px solid var(--surface-border)",
         padding: "20px 20px 16px",
       }}>
-        <h1 style={{ color: "var(--white)", fontSize: 22, fontWeight: 800, margin: "0 0 14px", letterSpacing: "-0.01em" }}>
+        <h1 style={{ color: "var(--white)", fontSize: 22, fontWeight: 800, margin: "0 0 10px", letterSpacing: "-0.01em" }}>
           Bank
         </h1>
-
-        {/* Total balances */}
-        <div style={{ display: "flex", gap: 8 }}>
-          {([
-            { key: "birr" as Currency, label: "ETB", bal: totals.birr },
-            { key: "usd" as Currency, label: "USD", bal: totals.usd },
-            { key: "usdt" as Currency, label: "USDT", bal: totals.usdt },
-          ]).map((c) => (
-            <div key={c.key} style={{
-              flex: 1, background: "var(--bg)", border: "1px solid var(--surface-border)",
-              borderRadius: 12, padding: "10px 12px", textAlign: "center",
-            }}>
-              <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
-                {c.label}
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: loading ? "var(--muted)" : "var(--white)", letterSpacing: "-0.02em" }}>
-                {loading ? "\u2014" : c.bal.toLocaleString()}
-              </div>
-            </div>
-          ))}
+        <div style={{
+          background: "var(--bg)", border: "1px solid var(--surface-border)",
+          borderRadius: 12, padding: "12px 16px", textAlign: "center",
+        }}>
+          <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+            Total Liquid
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: loading ? "var(--muted)" : "var(--white)", letterSpacing: "-0.02em" }}>
+            {loading ? "\u2014" : `ETB ${totalLiquid.toLocaleString()}`}
+          </div>
         </div>
       </div>
 
-      {/* Bank list */}
+      {/* Account cards */}
       <div style={{ padding: "16px 16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
         {loading ? (
           <div style={{ textAlign: "center", color: "var(--muted)", padding: "48px 0", fontSize: 15 }}>Loading...</div>
-        ) : banks.length === 0 ? (
-          <div style={{ textAlign: "center", color: "var(--muted)", padding: "64px 0", fontSize: 15 }}>No banks yet. Tap + to add one.</div>
+        ) : bankAccounts.length === 0 ? (
+          <div style={{ textAlign: "center", color: "var(--muted)", padding: "64px 20px", fontSize: 15 }}>
+            <Wallet size={40} style={{ marginBottom: 12, opacity: 0.4 }} />
+            <div>No banks yet. Tap + to add one.</div>
+          </div>
         ) : (
-          banks.map((bank) => {
-            const isExpanded = expandedBank === bank.name;
-            const hasNonZero = bank.balances.birr !== 0 || bank.balances.usd !== 0 || bank.balances.usdt !== 0;
-
-            return (
-              <div key={bank.name} style={{
-                background: "var(--surface)", border: "1px solid var(--surface-border)",
-                borderRadius: 12, overflow: "hidden",
-              }}>
-                {/* Bank header */}
-                <div style={{ padding: "14px 14px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <div style={{ fontWeight: 700, fontSize: 16, color: "var(--white)" }}>
-                      {bank.name}
-                    </div>
-                    <button
-                      onClick={() => setExpandedBank(isExpanded ? null : bank.name)}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600 }}
-                    >
-                      <History size={14} />
-                      {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </button>
-                  </div>
-
-                  {/* Currency balances with edit buttons */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {([
-                      { key: "birr" as Currency, label: "ETB", bal: bank.balances.birr },
-                      { key: "usd" as Currency, label: "USD", bal: bank.balances.usd },
-                      { key: "usdt" as Currency, label: "USDT", bal: bank.balances.usdt },
-                    ]).filter((c) => c.bal !== 0 || hasNonZero).map((c) => (
-                      <div key={c.key} style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "6px 10px", background: "var(--bg)", borderRadius: 8,
-                      }}>
-                        <div>
-                          <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginRight: 8 }}>{c.label}</span>
-                          <span style={{ fontSize: 16, fontWeight: 700, color: "var(--white)" }}>{c.bal.toLocaleString()}</span>
-                        </div>
-                        <button
-                          onClick={() => openEditBalance(bank.name, c.key, c.bal)}
-                          style={{
-                            background: "none", border: "1px solid var(--surface-border)",
-                            borderRadius: 6, padding: "4px 10px", cursor: "pointer",
-                            color: "var(--accent)", fontSize: 12, fontWeight: 600,
-                            display: "flex", alignItems: "center", gap: 4,
-                          }}
-                        >
-                          <Edit3 size={12} /> Edit
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+          bankAccounts.map((account) => (
+            <div key={account.id} style={{
+              background: "var(--surface)", border: "1px solid var(--surface-border)",
+              borderRadius: 12, padding: 14,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 16, color: "var(--white)" }}>{account.name}</span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                    background: "var(--bg)", color: "var(--muted)", border: "1px solid var(--surface-border)",
+                    textTransform: "uppercase", letterSpacing: "0.05em",
+                  }}>
+                    {currencyLabels[account.currency]}
+                  </span>
                 </div>
-
-                {/* Activity log (expanded) */}
-                {isExpanded && (
-                  <div style={{ borderTop: "1px solid var(--surface-border)", padding: "12px 14px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
-                      Activity
-                    </div>
-                    {bank.entries.length === 0 ? (
-                      <div style={{ fontSize: 13, color: "var(--muted)", textAlign: "center", padding: "12px 0" }}>No activity yet</div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {bank.entries.slice(0, 20).map((entry) => {
-                          const isDeposit = entry.type === "deposit";
-                          const curr = (entry.currency || "birr") as Currency;
-                          return (
-                            <div key={entry.id} style={{
-                              padding: "8px 10px", background: "var(--bg)", borderRadius: 8,
-                              display: "flex", justifyContent: "space-between", alignItems: "flex-start",
-                            }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 13, color: "var(--white)", fontWeight: 500 }}>
-                                  {entry.memo || (isDeposit ? "Deposit" : "Withdrawal")}
-                                </div>
-                                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                                  {formatDate(entry.created_at)}
-                                </div>
-                              </div>
-                              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: isDeposit ? "var(--green)" : "var(--error)" }}>
-                                  {isDeposit ? "+" : "-"}{formatAmount(entry.amount, curr)}
-                                </div>
-                                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>
-                                  Bal: {formatAmount(entry.balance_after, curr)}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
+                <button
+                  onClick={() => setDeleteConfirm(account.id)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", padding: 4 }}
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
-            );
-          })
+
+              {/* Balance row */}
+              <div style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "10px 12px", background: "var(--bg)", borderRadius: 8,
+              }}>
+                <span style={{ fontSize: 20, fontWeight: 700, color: "var(--white)" }}>
+                  {account.balance.toLocaleString()}
+                </span>
+                <button
+                  onClick={() => openEditBalance(account)}
+                  style={{
+                    background: "none", border: "1px solid var(--surface-border)",
+                    borderRadius: 6, padding: "5px 10px", cursor: "pointer",
+                    color: "var(--accent)", fontSize: 12, fontWeight: 600,
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}
+                >
+                  <Edit3 size={12} /> Update
+                </button>
+              </div>
+
+              {/* Exchange rate (non-birr only) */}
+              {account.currency !== "birr" && (
+                <button
+                  onClick={() => openEditRate(account)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6, marginTop: 8,
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "var(--muted)", fontSize: 12, fontWeight: 600, padding: 0,
+                  }}
+                >
+                  <TrendingUp size={12} />
+                  1 {currencyLabels[account.currency]} = {account.exchange_rate.toLocaleString()} ETB
+                  <Edit3 size={10} style={{ opacity: 0.5 }} />
+                </button>
+              )}
+            </div>
+          ))
         )}
       </div>
 
-      <FAB onClick={() => { setNewBankName(""); setNewAmount(""); setNewMemo(""); setNewCurrency("birr"); setError(null); setAddBankOpen(true); }} />
+      {/* Activity Log */}
+      {!loading && bankLog.length > 0 && (
+        <div style={{ padding: "20px 16px 0" }}>
+          <h2 style={{
+            fontSize: 11, fontWeight: 700, color: "var(--muted)",
+            textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10,
+          }}>
+            Recent Activity
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {bankLog.slice(0, 20).map((log) => {
+              const account = accountMap.get(log.account_id);
+              const delta = log.balance_after - log.balance_before;
+              const isPositive = delta >= 0;
+              const currency = account?.currency || "birr";
+              return (
+                <div key={log.id} style={{
+                  padding: "10px 12px", background: "var(--surface)",
+                  border: "1px solid var(--surface-border)", borderRadius: 8,
+                  display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--white)" }}>
+                      {account?.name || "Unknown"}
+                    </div>
+                    {log.memo && (
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{log.memo}</div>
+                    )}
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                      {formatDate(log.created_at)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: isPositive ? "var(--green)" : "var(--error)" }}>
+                      {isPositive ? "+" : ""}{delta.toLocaleString()} {currencyLabels[currency as Currency]}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                      {log.balance_before.toLocaleString()} → {log.balance_after.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      {/* Edit Balance Sheet */}
-      <BottomSheet open={editOpen} onClose={() => !submitting && setEditOpen(false)} title={`Edit ${editBankName} Balance`}>
+      <FAB onClick={() => { setNewName(""); setNewAmount(""); setNewRate(""); setNewCurrency("birr"); setError(null); setAddOpen(true); }} />
+
+      {/* Update Balance Sheet */}
+      <BottomSheet open={editOpen} onClose={() => !submitting && setEditOpen(false)} title="Update Balance">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{
             padding: "10px 14px", background: "var(--bg)", borderRadius: 10,
-            fontSize: 13, color: "var(--muted)", textAlign: "center",
+            fontSize: 14, color: "var(--muted)", textAlign: "center",
           }}>
-            Editing <span style={{ color: "var(--accent)", fontWeight: 700 }}>{currencySymbols[editCurrency]}</span> balance for <span style={{ color: "var(--white)", fontWeight: 700 }}>{editBankName}</span>
+            <span style={{ color: "var(--white)", fontWeight: 700 }}>{editAccount?.name}</span>
+            {" \u00b7 "}
+            <span style={{ color: "var(--accent)", fontWeight: 700 }}>{editAccount ? currencyLabels[editAccount.currency] : ""}</span>
           </div>
           <div>
-            <label style={lbl}>New Balance ({currencySymbols[editCurrency]}) *</label>
-            <input type="number" inputMode="decimal" placeholder="0" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} style={inp} />
+            <label style={lbl}>Current Balance</label>
+            <input
+              type="number" inputMode="decimal" placeholder="0"
+              value={editAmount}
+              onChange={(e) => setEditAmount(e.target.value)}
+              style={{ ...inp, fontSize: 20, fontWeight: 700, textAlign: "center", padding: "14px 12px" }}
+            />
           </div>
           <div>
-            <label style={lbl}>Memo (required) *</label>
-            <textarea placeholder="Reason for adjustment..." value={editMemo} onChange={(e) => setEditMemo(e.target.value)} rows={2}
-              style={{ ...inp, resize: "none", fontFamily: "inherit" }} />
+            <label style={lbl}>Note (optional)</label>
+            <textarea
+              placeholder="Why is this changing?"
+              value={editMemo}
+              onChange={(e) => setEditMemo(e.target.value)}
+              rows={2}
+              style={{ ...inp, resize: "none", fontFamily: "inherit" }}
+            />
           </div>
           {error && (
             <div style={{
@@ -326,23 +304,56 @@ export default function BankPage() {
               border: "1px solid color-mix(in srgb, var(--error) 20%, transparent)",
             }}>{error}</div>
           )}
-          <button onClick={handleEditBalance} disabled={submitting} style={{
+          <button onClick={handleUpdateBalance} disabled={submitting} style={{
             width: "100%", padding: 14, borderRadius: 12, border: "none",
             cursor: submitting ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 700,
             color: "var(--white)", background: submitting ? "var(--surface)" : "var(--accent)",
             opacity: submitting ? 0.5 : 1,
           }}>
-            {submitting ? "Saving..." : "Update Balance"}
+            {submitting ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </BottomSheet>
+
+      {/* Update Rate Sheet */}
+      <BottomSheet open={rateOpen} onClose={() => !submitting && setRateOpen(false)} title="Exchange Rate">
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{
+            padding: "10px 14px", background: "var(--bg)", borderRadius: 10,
+            fontSize: 14, color: "var(--muted)", textAlign: "center",
+          }}>
+            1 {rateAccount ? currencyLabels[rateAccount.currency] : ""} = ___ ETB
+          </div>
+          <input
+            type="number" inputMode="decimal" placeholder="0"
+            value={rateValue}
+            onChange={(e) => setRateValue(e.target.value)}
+            style={{ ...inp, fontSize: 20, fontWeight: 700, textAlign: "center", padding: "14px 12px" }}
+          />
+          {error && (
+            <div style={{
+              color: "var(--error)", fontSize: 13, padding: "8px 12px", borderRadius: 8,
+              background: "color-mix(in srgb, var(--error) 10%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--error) 20%, transparent)",
+            }}>{error}</div>
+          )}
+          <button onClick={handleUpdateRate} disabled={submitting} style={{
+            width: "100%", padding: 14, borderRadius: 12, border: "none",
+            cursor: submitting ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 700,
+            color: "var(--white)", background: submitting ? "var(--surface)" : "var(--accent)",
+            opacity: submitting ? 0.5 : 1,
+          }}>
+            {submitting ? "Saving..." : "Save"}
           </button>
         </div>
       </BottomSheet>
 
       {/* Add Bank Sheet */}
-      <BottomSheet open={addBankOpen} onClose={() => !submitting && setAddBankOpen(false)} title="Add Bank">
+      <BottomSheet open={addOpen} onClose={() => !submitting && setAddOpen(false)} title="Add Bank">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
-            <label style={lbl}>Bank Name *</label>
-            <input type="text" placeholder="e.g. CBE, Awash, Telebirr..." value={newBankName} onChange={(e) => setNewBankName(e.target.value)} style={inp} />
+            <label style={lbl}>Bank Name</label>
+            <input type="text" placeholder="e.g. CBE, Awash, Telebirr..." value={newName} onChange={(e) => setNewName(e.target.value)} style={inp} />
           </div>
           <div>
             <label style={lbl}>Currency</label>
@@ -355,20 +366,21 @@ export default function BankPage() {
                   color: newCurrency === c ? "var(--white)" : "var(--muted)",
                   transition: "all 0.15s",
                 }}>
-                  {c === "birr" ? "ETB" : c.toUpperCase()}
+                  {currencyLabels[c]}
                 </button>
               ))}
             </div>
           </div>
           <div>
-            <label style={lbl}>Starting Balance *</label>
+            <label style={lbl}>Starting Balance</label>
             <input type="number" inputMode="decimal" placeholder="0" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} style={inp} />
           </div>
-          <div>
-            <label style={lbl}>Memo (required) *</label>
-            <textarea placeholder="e.g. Initial balance..." value={newMemo} onChange={(e) => setNewMemo(e.target.value)} rows={2}
-              style={{ ...inp, resize: "none", fontFamily: "inherit" }} />
-          </div>
+          {newCurrency !== "birr" && (
+            <div>
+              <label style={lbl}>Exchange Rate (1 {currencyLabels[newCurrency]} = ? ETB)</label>
+              <input type="number" inputMode="decimal" placeholder="e.g. 130" value={newRate} onChange={(e) => setNewRate(e.target.value)} style={inp} />
+            </div>
+          )}
           {error && (
             <div style={{
               color: "var(--error)", fontSize: 13, padding: "8px 12px", borderRadius: 8,
@@ -383,6 +395,28 @@ export default function BankPage() {
             opacity: submitting ? 0.5 : 1,
           }}>
             {submitting ? "Saving..." : "Add Bank"}
+          </button>
+        </div>
+      </BottomSheet>
+
+      {/* Delete Confirmation Sheet */}
+      <BottomSheet open={deleteConfirm !== null} onClose={() => !submitting && setDeleteConfirm(null)} title="Delete Bank">
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{
+            padding: "12px 14px", background: "var(--bg)", borderRadius: 10,
+            fontSize: 14, color: "var(--muted)", textAlign: "center",
+          }}>
+            Are you sure you want to delete <span style={{ color: "var(--white)", fontWeight: 700 }}>
+              {deleteConfirm !== null ? accountMap.get(deleteConfirm)?.name : ""}
+            </span>? This will remove the account and all its activity history.
+          </div>
+          <button onClick={() => deleteConfirm !== null && handleDelete(deleteConfirm)} disabled={submitting} style={{
+            width: "100%", padding: 14, borderRadius: 12, border: "none",
+            cursor: submitting ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 700,
+            color: "var(--white)", background: submitting ? "var(--surface)" : "var(--error)",
+            opacity: submitting ? 0.5 : 1,
+          }}>
+            {submitting ? "Deleting..." : "Delete"}
           </button>
         </div>
       </BottomSheet>
