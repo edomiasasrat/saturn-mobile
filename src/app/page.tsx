@@ -9,7 +9,7 @@ import BottomSheet from "@/components/BottomSheet";
 import FAB from "@/components/FAB";
 import { formatBirr, formatDate } from "@/lib/format";
 import { useData } from "@/lib/DataProvider";
-import type { Phone, Transaction, BankEntry, SellerWithStats } from "@/lib/types";
+import type { Phone, Transaction, SellerWithStats } from "@/lib/types";
 
 const periods = [
   { key: "today", label: "Today" },
@@ -30,15 +30,15 @@ const detailRow = (label: string, value: string | null | undefined, color?: stri
 };
 
 /* ─── Modal content types ─── */
-type ModalType = "phone" | "transaction" | "bank" | "seller" | null;
+type ModalType = "phone" | "transaction" | "seller" | null;
 
 export default function Dashboard() {
-  const { getDashboardStats, getTopSellers, getPhoneActivity, getProfitLoss, getNetWorth, phones, transactions, bankEntries, loading, refresh, addExpense } = useData();
+  const { getDashboardStats, getTopSellers, getPhoneActivity, getProfitLoss, getNetWorth, phones, transactions, bankAccounts, loading, refresh, addExpense, getTotalLiquid } = useData();
 
   const [period, setPeriod] = useState("today");
 
   // Modal state
-  type ModalItem = Phone | Transaction | BankEntry;
+  type ModalItem = Phone | Transaction;
   const [modalOpen, setModalOpen] = useState(false);
   const [modalType, setModalType] = useState<ModalType>(null);
   const [modalItems, setModalItems] = useState<ModalItem[]>([]);
@@ -92,14 +92,6 @@ export default function Dashboard() {
     setModalOpen(true);
   }
 
-  function openBankModal() {
-    if (bankEntries.length === 0) return;
-    setModalType("bank");
-    setModalItems(bankEntries);
-    setModalIndex(0);
-    setModalOpen(true);
-  }
-
   function openSellerModal(sellerId: number) {
     const allSellers = [...topSellers].sort((a, b) => b.total_owed - a.total_owed);
     const idx = allSellers.findIndex((s) => s.id === sellerId);
@@ -137,25 +129,6 @@ export default function Dashboard() {
             {tx.payment_method && detailRow("Payment", tx.payment_method === "cash" ? "Cash" : "Bank")}
             {tx.memo && detailRow("Memo", tx.memo)}
             {detailRow("Date", formatDate(tx.created_at))}
-          </div>
-        </div>
-      );
-    }
-
-    if (modalType === "bank") {
-      const entry = item as BankEntry;
-      const isDeposit = entry.type === "deposit";
-      return (
-        <div>
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: "0 0 16px" }}>
-            {isDeposit ? "Bank Deposit" : "Bank Withdrawal"}
-          </h2>
-          <div style={{ marginBottom: 16 }}>
-            {detailRow("Type", isDeposit ? "Deposit" : "Withdrawal")}
-            {detailRow("Amount", formatBirr(entry.amount), isDeposit ? "var(--green)" : "var(--error)")}
-            {entry.memo && detailRow("Memo", entry.memo)}
-            {detailRow("Balance After", formatBirr(entry.balance_after))}
-            {detailRow("Date", formatDate(entry.created_at))}
           </div>
         </div>
       );
@@ -211,24 +184,10 @@ export default function Dashboard() {
                 <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
                   Net Worth
                 </span>
-                <span style={{ fontSize: 22, fontWeight: 700, color: loading ? "var(--muted)" : nw.total_etb >= 0 ? "var(--green)" : "var(--error)" }}>
-                  {loading ? "\u2014" : formatBirr(nw.total_etb)}
+                <span style={{ fontSize: 22, fontWeight: 700, color: loading ? "var(--muted)" : nw >= 0 ? "var(--green)" : "var(--error)" }}>
+                  {loading ? "\u2014" : formatBirr(nw)}
                 </span>
               </div>
-              {!loading && (nw.usd > 0 || nw.usdt > 0) && (
-                <div style={{ display: "flex", gap: 10, marginTop: 6, justifyContent: "flex-end" }}>
-                  {nw.usd > 0 && (
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>
-                      + USD {nw.usd.toLocaleString()}
-                    </span>
-                  )}
-                  {nw.usdt > 0 && (
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>
-                      + USDT {nw.usdt.toLocaleString()}
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
           );
         })()}
@@ -276,8 +235,8 @@ export default function Dashboard() {
             <div onClick={() => openTransactionModal("expense")} style={{ cursor: "pointer" }}>
               <StatCard label="Expenses" value={formatBirr(stats.total_expenses)} color="var(--error)" />
             </div>
-            <div onClick={() => openBankModal()} style={{ cursor: "pointer" }}>
-              <StatCard label="Bank (ETB)" value={formatBirr(stats.bank_balance_birr)} />
+            <div>
+              <StatCard label="Bank (ETB)" value={formatBirr(getTotalLiquid())} />
             </div>
             <div onClick={() => openTransactionModal()} style={{ cursor: "pointer" }}>
               <StatCard label="Profit" value={formatBirr(stats.net_profit)} color={stats.net_profit >= 0 ? "var(--green)" : "var(--amber)"} />
