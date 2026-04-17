@@ -1,30 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBankEntries, getAllBankBalances, addBankEntry } from "@/lib/db";
+import { getBankAccounts, getBankLog, addBankAccount, updateBankBalance, updateBankRate, deleteBankAccount } from "@/lib/db";
 
 export async function GET() {
-  const [entries, balances] = await Promise.all([getBankEntries(), getAllBankBalances()]);
-  return NextResponse.json({ entries, balances });
+  const [accounts, log] = await Promise.all([getBankAccounts(), getBankLog()]);
+  return NextResponse.json({ accounts, log });
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  const { type, amount } = body;
-
-  if (!type || amount == null) {
-    return NextResponse.json(
-      { error: "type and amount are required" },
-      { status: 400 }
-    );
+  if (!body.name || !body.currency) {
+    return NextResponse.json({ error: "name and currency are required" }, { status: 400 });
   }
 
-  const entry = await addBankEntry({
-    type,
-    amount: Number(amount),
-    memo: body.memo ?? null,
-    bank_name: body.bank_name ?? null,
-    currency: body.currency ?? "birr",
+  const account = await addBankAccount({
+    name: body.name,
+    currency: body.currency,
+    balance: Number(body.balance ?? 0),
+    exchange_rate: body.exchange_rate != null ? Number(body.exchange_rate) : undefined,
   });
 
-  return NextResponse.json(entry, { status: 201 });
+  return NextResponse.json(account, { status: 201 });
+}
+
+export async function PATCH(req: NextRequest) {
+  const body = await req.json();
+
+  if (!body.action || !body.account_id) {
+    return NextResponse.json({ error: "action and account_id are required" }, { status: 400 });
+  }
+
+  if (body.action === "update_balance") {
+    if (body.balance == null) {
+      return NextResponse.json({ error: "balance is required" }, { status: 400 });
+    }
+    const account = await updateBankBalance(body.account_id, Number(body.balance), body.memo ?? null);
+    return NextResponse.json(account);
+  }
+
+  if (body.action === "update_rate") {
+    if (body.exchange_rate == null) {
+      return NextResponse.json({ error: "exchange_rate is required" }, { status: 400 });
+    }
+    const account = await updateBankRate(body.account_id, Number(body.exchange_rate));
+    return NextResponse.json(account);
+  }
+
+  return NextResponse.json({ error: "unknown action" }, { status: 400 });
+}
+
+export async function DELETE(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+  await deleteBankAccount(Number(id));
+  return NextResponse.json({ ok: true });
 }
