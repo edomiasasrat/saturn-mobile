@@ -90,7 +90,13 @@ function loadFromStorage(): DataStore | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Clear stale v1 format that had bankEntries instead of bankAccounts
+    if (parsed.bankEntries && !parsed.bankAccounts) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return parsed;
   } catch { return null; }
 }
 

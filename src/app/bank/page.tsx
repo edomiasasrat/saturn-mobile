@@ -40,6 +40,7 @@ export default function BankPage() {
     setEditAccount(account);
     setEditAmount(String(account.balance));
     setEditMemo("");
+    setRateValue(String(account.exchange_rate));
     setError(null);
     setEditOpen(true);
   };
@@ -55,10 +56,17 @@ export default function BankPage() {
     if (!editAccount) return;
     const parsed = parseFloat(editAmount);
     if (editAmount === "" || isNaN(parsed)) { setError("Enter a valid amount."); return; }
-    if (parsed === editAccount.balance && !editMemo.trim()) { setEditOpen(false); return; }
     setSubmitting(true);
     try {
+      // Update balance
       await updateBankBalance(editAccount.id, parsed, editMemo.trim() || null);
+      // Update exchange rate if changed (non-birr only)
+      if (editAccount.currency !== "birr" && rateValue !== "") {
+        const parsedRate = parseFloat(rateValue);
+        if (!isNaN(parsedRate) && parsedRate > 0 && parsedRate !== editAccount.exchange_rate) {
+          await updateBankRate(editAccount.id, parsedRate);
+        }
+      }
       setEditOpen(false);
     } catch { setError("Something went wrong."); }
     finally { setSubmitting(false); }
@@ -291,6 +299,17 @@ export default function BankPage() {
               style={{ ...inp, fontSize: 20, fontWeight: 700, textAlign: "center", padding: "14px 12px" }}
             />
           </div>
+          {editAccount && editAccount.currency !== "birr" && (
+            <div>
+              <label style={lbl}>Exchange Rate (1 {currencyLabels[editAccount.currency]} = ? ETB)</label>
+              <input
+                type="number" inputMode="decimal" placeholder="e.g. 130"
+                value={rateValue}
+                onChange={(e) => setRateValue(e.target.value)}
+                style={inp}
+              />
+            </div>
+          )}
           <div>
             <label style={lbl}>Note (optional)</label>
             <textarea
