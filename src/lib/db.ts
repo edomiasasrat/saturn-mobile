@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import type { Phone, Transaction, BankEntry, Seller, SellerWithStats, DashboardStats, PhoneActivity, Loan, LoanPayment } from "./types";
+import type { Phone, Transaction, BankAccount, BankLog, Seller, SellerWithStats, DashboardStats, PhoneActivity, Loan, LoanPayment } from "./types";
 
 const client = createClient({
   url: process.env.TURSO_DATABASE_URL!,
@@ -85,30 +85,66 @@ async function initDb() {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       )`,
 
-      // Bank entries
-      `CREATE TABLE IF NOT EXISTS saturn_bank_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL CHECK(type IN ('deposit', 'withdrawal')),
-        amount INTEGER NOT NULL,
-        memo TEXT,
-        bank_name TEXT,
-        currency TEXT NOT NULL DEFAULT 'birr' CHECK(currency IN ('birr', 'usd', 'usdt')),
-        balance_after INTEGER NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )`,
+      `CREATE TABLE IF NOT EXISTS saturn_bank_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  currency TEXT NOT NULL CHECK(currency IN ('birr', 'usd', 'usdt')),
+  balance INTEGER NOT NULL DEFAULT 0,
+  exchange_rate REAL NOT NULL DEFAULT 1,
+  memo TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`,
+
+      `CREATE TABLE IF NOT EXISTS saturn_bank_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES saturn_bank_accounts(id) ON DELETE CASCADE,
+  balance_before INTEGER NOT NULL,
+  balance_after INTEGER NOT NULL,
+  memo TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`,
     ],
     "write"
   );
 
   // Safe column additions for existing databases
   const alterStatements = [
-    "ALTER TABLE saturn_bank_entries ADD COLUMN bank_name TEXT",
-    "ALTER TABLE saturn_bank_entries ADD COLUMN currency TEXT NOT NULL DEFAULT 'birr'",
     "ALTER TABLE saturn_loans ADD COLUMN loan_type TEXT NOT NULL DEFAULT 'given'",
   ];
   for (const sql of alterStatements) {
     try { await client.execute(sql); } catch { /* column already exists */ }
   }
+
+  // Migrate from saturn_bank_entries to saturn_bank_accounts (one-time)
+  try {
+    const oldExists = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type='table' AND name='saturn_bank_entries'",
+      args: [],
+    });
+    if (oldExists.rows.length > 0) {
+      const newCount = await client.execute({ sql: "SELECT COUNT(*) as cnt FROM saturn_bank_accounts", args: [] });
+      if (Number((newCount.rows[0] as unknown as { cnt: number }).cnt) === 0) {
+        const latest = await client.execute({
+          sql: `SELECT COALESCE(bank_name, 'Cash') as name, currency, balance_after as balance
+                FROM saturn_bank_entries
+                WHERE id IN (
+                  SELECT MAX(id) FROM saturn_bank_entries
+                  GROUP BY COALESCE(bank_name, 'Cash'), currency
+                )`,
+          args: [],
+        });
+        for (const row of latest.rows) {
+          const r = row as unknown as { name: string; currency: string; balance: number };
+          await client.execute({
+            sql: "INSERT INTO saturn_bank_accounts (name, currency, balance, exchange_rate) VALUES (?, ?, ?, 1)",
+            args: [r.name, r.currency, r.balance],
+          });
+        }
+      }
+      await client.execute("DROP TABLE IF EXISTS saturn_bank_entries");
+    }
+  } catch { /* migration already done or old table doesn't exist */ }
 }
 
 function rowTo<T>(row: Record<string, unknown>): T {
@@ -261,10 +297,6 @@ export async function quickSellPhone(phoneId: number, actualPrice: number, payme
     args: [actualPrice, `Direct sale: ${phone.brand} ${phone.model}`, phone.memo, phoneId, paymentMethod],
   });
 
-  if (paymentMethod === "bank") {
-    await addBankEntry({ type: "deposit", amount: actualPrice, memo: `Direct sale: ${phone.brand} ${phone.model}` });
-  }
-
   const updated = await getPhone(phoneId);
   return { phone: updated!, transaction: rowTo<Transaction>(txRes.rows[0]) };
 }
@@ -320,12 +352,6 @@ export async function collectPerPhone(sellerId: number, phoneIds: number[], paym
     transactions.push(rowTo<Transaction>(txRes.rows[0]));
   }
 
-  const totalAmount = transactions.reduce((s, t) => s + t.amount, 0);
-  if (paymentMethod === "bank" && totalAmount > 0) {
-    const seller = await getSeller(sellerId);
-    await addBankEntry({ type: "deposit", amount: totalAmount, memo: `Collection from ${seller?.name}` });
-  }
-
   return transactions;
 }
 
@@ -339,10 +365,6 @@ export async function collectLumpSum(sellerId: number, amount: number, paymentMe
           VALUES ('income', ?, ?, ?, ?, 'collection', ?) RETURNING *`,
     args: [amount, `Lump sum from ${seller.name}`, memo, sellerId, paymentMethod],
   });
-
-  if (paymentMethod === "bank") {
-    await addBankEntry({ type: "deposit", amount, memo: `Lump sum from ${seller.name}` });
-  }
 
   return rowTo<Transaction>(txRes.rows[0]);
 }
@@ -372,11 +394,6 @@ export async function addTransaction(data: {
     args: [data.type, data.amount, data.description, data.memo, data.category, pm],
   });
 
-  // If expense paid from bank, create a bank withdrawal
-  if (data.type === "expense" && pm === "bank") {
-    await addBankEntry({ type: "withdrawal", amount: data.amount, memo: data.description });
-  }
-
   return rowTo<Transaction>(result.rows[0]);
 }
 
@@ -385,56 +402,76 @@ export async function deleteTransaction(id: number): Promise<void> {
   await client.execute({ sql: "DELETE FROM saturn_transactions WHERE id = ?", args: [id] });
 }
 
-// ── Bank ─────────────────────────────────────────────────────────────────────
+// ── Bank Accounts ────────────────────────────────────────────────────────────
 
-export async function getBankEntries(): Promise<BankEntry[]> {
+export async function getBankAccounts(): Promise<BankAccount[]> {
   await ensureInit();
-  const result = await client.execute({ sql: "SELECT * FROM saturn_bank_entries ORDER BY created_at DESC", args: [] });
-  return result.rows.map((r) => rowTo<BankEntry>(r));
+  const result = await client.execute({ sql: "SELECT * FROM saturn_bank_accounts ORDER BY name ASC", args: [] });
+  return result.rows.map((r) => rowTo<BankAccount>(r));
 }
 
-export async function getBankBalance(currency: string = "birr"): Promise<number> {
+export async function getBankLog(limit: number = 50): Promise<BankLog[]> {
   await ensureInit();
-  // Sum latest balance_after per bank_name for this currency
-  // Uses MAX(id) as tiebreaker for entries with identical timestamps
   const result = await client.execute({
-    sql: `SELECT COALESCE(bank_name, '__cash__') as bname, balance_after
-          FROM saturn_bank_entries
-          WHERE currency = ?
-          AND id IN (
-            SELECT MAX(e2.id) FROM saturn_bank_entries e2
-            WHERE e2.currency = ?
-            GROUP BY COALESCE(e2.bank_name, '__cash__')
-          )`,
-    args: [currency, currency],
+    sql: "SELECT * FROM saturn_bank_log ORDER BY created_at DESC LIMIT ?",
+    args: [limit],
   });
-  let total = 0;
-  for (const row of result.rows) {
-    total += Number((row as unknown as { balance_after: number }).balance_after);
-  }
-  return total;
+  return result.rows.map((r) => rowTo<BankLog>(r));
 }
 
-export async function getAllBankBalances(): Promise<{ birr: number; usd: number; usdt: number }> {
+export async function addBankAccount(data: { name: string; currency: string; balance: number; exchange_rate?: number }): Promise<BankAccount> {
   await ensureInit();
-  const [birr, usd, usdt] = await Promise.all([
-    getBankBalance("birr"),
-    getBankBalance("usd"),
-    getBankBalance("usdt"),
-  ]);
-  return { birr, usd, usdt };
-}
-
-export async function addBankEntry(data: { type: string; amount: number; memo: string | null; bank_name?: string | null; currency?: string }): Promise<BankEntry> {
-  await ensureInit();
-  const currency = data.currency || "birr";
-  const currentBalance = await getBankBalance(currency);
-  const newBalance = data.type === "deposit" ? currentBalance + data.amount : currentBalance - data.amount;
+  const rate = data.exchange_rate ?? (data.currency === "birr" ? 1 : 1);
   const result = await client.execute({
-    sql: "INSERT INTO saturn_bank_entries (type, amount, memo, bank_name, currency, balance_after) VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
-    args: [data.type, data.amount, data.memo, data.bank_name ?? null, currency, newBalance],
+    sql: "INSERT INTO saturn_bank_accounts (name, currency, balance, exchange_rate) VALUES (?, ?, ?, ?) RETURNING *",
+    args: [data.name, data.currency, data.balance, rate],
   });
-  return rowTo<BankEntry>(result.rows[0]);
+  const account = rowTo<BankAccount>(result.rows[0]);
+
+  // Log the initial balance
+  await client.execute({
+    sql: "INSERT INTO saturn_bank_log (account_id, balance_before, balance_after, memo) VALUES (?, 0, ?, ?)",
+    args: [account.id, data.balance, "Opening balance"],
+  });
+
+  return account;
+}
+
+export async function updateBankBalance(accountId: number, newBalance: number, memo: string | null): Promise<BankAccount> {
+  await ensureInit();
+  const current = await client.execute({ sql: "SELECT * FROM saturn_bank_accounts WHERE id = ?", args: [accountId] });
+  if (current.rows.length === 0) throw new Error("Account not found");
+  const oldBalance = Number((current.rows[0] as unknown as { balance: number }).balance);
+
+  await client.execute({
+    sql: "UPDATE saturn_bank_accounts SET balance = ?, memo = ?, updated_at = datetime('now') WHERE id = ?",
+    args: [newBalance, memo, accountId],
+  });
+
+  // Log the change
+  await client.execute({
+    sql: "INSERT INTO saturn_bank_log (account_id, balance_before, balance_after, memo) VALUES (?, ?, ?, ?)",
+    args: [accountId, oldBalance, newBalance, memo],
+  });
+
+  const updated = await client.execute({ sql: "SELECT * FROM saturn_bank_accounts WHERE id = ?", args: [accountId] });
+  return rowTo<BankAccount>(updated.rows[0]);
+}
+
+export async function updateBankRate(accountId: number, exchangeRate: number): Promise<BankAccount> {
+  await ensureInit();
+  await client.execute({
+    sql: "UPDATE saturn_bank_accounts SET exchange_rate = ?, updated_at = datetime('now') WHERE id = ?",
+    args: [exchangeRate, accountId],
+  });
+  const result = await client.execute({ sql: "SELECT * FROM saturn_bank_accounts WHERE id = ?", args: [accountId] });
+  return rowTo<BankAccount>(result.rows[0]);
+}
+
+export async function deleteBankAccount(accountId: number): Promise<void> {
+  await ensureInit();
+  await client.execute({ sql: "DELETE FROM saturn_bank_log WHERE account_id = ?", args: [accountId] });
+  await client.execute({ sql: "DELETE FROM saturn_bank_accounts WHERE id = ?", args: [accountId] });
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -480,8 +517,6 @@ export async function getDashboardStats(period?: string): Promise<DashboardStats
   });
   const operatingExpenses = Number((operatingExpensesRes.rows[0] as unknown as { total: number }).total);
 
-  const birrBalance = await getBankBalance("birr");
-
   return {
     phones_in_stock: Number(stock.cnt),
     phones_with_sellers: Number(withSellers.cnt),
@@ -491,7 +526,6 @@ export async function getDashboardStats(period?: string): Promise<DashboardStats
     total_expenses: allExpenses,
     total_operating_expenses: operatingExpenses,
     net_profit: collections - operatingExpenses,
-    bank_balance_birr: birrBalance,
   };
 }
 
