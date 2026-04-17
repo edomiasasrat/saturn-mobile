@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, ReactNode } from "react";
-import { Package, ArrowUpRight, ArrowDownLeft, RotateCcw, ShoppingBag, Landmark } from "lucide-react";
+import { Package, ArrowUpRight, ArrowDownLeft, RotateCcw, ShoppingBag } from "lucide-react";
 import { formatBirr, formatDate } from "@/lib/format";
 import ModalDrilldown from "@/components/ModalDrilldown";
 import PhoneDetail from "@/components/PhoneDetail";
@@ -14,9 +14,7 @@ type EventType =
   | "collected"
   | "returned"
   | "direct_sale"
-  | "expense"
-  | "bank_deposit"
-  | "bank_withdrawal";
+  | "expense";
 
 const TYPE_CONFIG: Record<
   EventType,
@@ -28,8 +26,6 @@ const TYPE_CONFIG: Record<
   returned:        { Icon: RotateCcw,     color: "var(--muted)" },
   direct_sale:     { Icon: ShoppingBag,   color: "var(--green)" },
   expense:         { Icon: ArrowUpRight,  color: "var(--error)" },
-  bank_deposit:    { Icon: Landmark,      color: "var(--green)" },
-  bank_withdrawal: { Icon: Landmark,      color: "var(--error)" },
 };
 
 /* ─── Phone-type events where we can extract a phone ID ─── */
@@ -163,23 +159,6 @@ function ExpenseDetailCard({ event }: { event: TimelineEvent }) {
   );
 }
 
-function BankDetailCard({ event }: { event: TimelineEvent }) {
-  const isDeposit = event.type === "bank_deposit";
-  return (
-    <div>
-      <h2 style={{ fontSize: 20, fontWeight: 700, color: "var(--white)", margin: "0 0 16px" }}>
-        {event.title}
-      </h2>
-      <div style={{ marginBottom: 16 }}>
-        {detailRow("Type", isDeposit ? "Deposit" : "Withdrawal")}
-        {event.amount !== null && detailRow("Amount", formatBirr(event.amount), isDeposit ? "var(--green)" : "var(--error)")}
-        {event.subtitle && detailRow("Details", event.subtitle)}
-        {detailRow("Date", formatDate(event.created_at))}
-      </div>
-    </div>
-  );
-}
-
 function GenericEventCard({ event }: { event: TimelineEvent }) {
   const amountColor =
     event.amountType === "income"  ? "var(--green)"  :
@@ -246,11 +225,6 @@ export default function TimelinePage() {
     // Expense events
     if (event.type === "expense") {
       return <ExpenseDetailCard event={event} />;
-    }
-
-    // Bank events
-    if (event.type === "bank_deposit" || event.type === "bank_withdrawal") {
-      return <BankDetailCard event={event} />;
     }
 
     // Fallback: generic card
