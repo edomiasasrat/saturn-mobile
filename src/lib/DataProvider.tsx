@@ -585,7 +585,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       memo, created_at: new Date().toISOString(),
     };
     setBankLog((prev) => [logEntry, ...prev]);
-    serverPatch("/api/bank", { action: "update_balance", account_id: accountId, balance: newBalance, memo });
+    await serverPatch("/api/bank", { action: "update_balance", account_id: accountId, balance: newBalance, memo });
     debouncedSync();
   }, [bankAccounts]);
 
@@ -593,7 +593,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setBankAccounts((prev) => prev.map((a) =>
       a.id === accountId ? { ...a, exchange_rate: exchangeRate, updated_at: new Date().toISOString() } : a
     ));
-    serverPatch("/api/bank", { action: "update_rate", account_id: accountId, exchange_rate: exchangeRate });
+    await serverPatch("/api/bank", { action: "update_rate", account_id: accountId, exchange_rate: exchangeRate });
     debouncedSync();
   }, []);
 

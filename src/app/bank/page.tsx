@@ -200,18 +200,22 @@ export default function BankPage() {
 
               {/* Exchange rate (non-birr only) */}
               {account.currency !== "birr" && (
-                <button
+                <div
                   onClick={() => openEditRate(account)}
                   style={{
-                    display: "flex", alignItems: "center", gap: 6, marginTop: 8,
-                    background: "none", border: "none", cursor: "pointer",
-                    color: "var(--muted)", fontSize: 12, fontWeight: 600, padding: 0,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "8px 12px", background: "var(--bg)", borderRadius: 8,
+                    marginTop: 6, cursor: "pointer",
                   }}
                 >
-                  <TrendingUp size={12} />
-                  1 {currencyLabels[account.currency]} = {account.exchange_rate.toLocaleString()} ETB
-                  <Edit3 size={10} style={{ opacity: 0.5 }} />
-                </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <TrendingUp size={14} style={{ color: "var(--accent)" }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--white)" }}>
+                      1 {currencyLabels[account.currency]} = {account.exchange_rate.toLocaleString()} ETB
+                    </span>
+                  </div>
+                  <Edit3 size={12} style={{ color: "var(--accent)" }} />
+                </div>
               )}
             </div>
           ))
